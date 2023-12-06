@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Fri Jul 14 10:16:38 2023
+Created on Sun Nov  5 11:08:23 2023
 
 @author: ricij
+
 """
 
 #!/usr/bin/env python3
@@ -16,13 +17,16 @@ Created on Wed Jul  5 08:51:38 2023
 import copy
 import numpy as np
 import time
+import xarray as xr
 from scipy import sparse
 import scipy.sparse.linalg as lg
+from scipy.optimize import curve_fit
 
 import Functions
 import ATM_fct
 import OCN_fct
 import Surface_fct
+from scipy.optimize import least_squares
 
 class Mesh():
     def __init__(self):
@@ -47,8 +51,8 @@ class Mesh():
         self.A_olr = 241
         self.B_olr = 2.4
         
-        self.C_s = (1350 * 750 * 1  + 1.225 * 1000 * 3850) / 3.15576e7 # Heat Capacity Land   
-        self.C_snow = 0.155026
+        self.C_s = (1350 * 750 * 1  + 1.225 * 1000 * 3850) / 3.15576e7 # Heat Capacity Land
+        
 
 class P_atm:
     def __init__(self):        
@@ -164,33 +168,122 @@ def ice_edge(H_I, phi, Geo_dat): # Calculating Ice Edge
     return lat_index_s, ice_edge_latitude_s, lat_index_n, ice_edge_latitude_n
   
 
-def surface_temp_land(T_ATM, solar_forcing, phi, mesh, Geo_dat, T_S_land, delta_t, heat_capacity): #calc surface temp of land without diffusion
-    T_S_land_new = np.zeros((mesh.n_latitude, mesh.n_longitude))
-    RHS = np.zeros((mesh.n_latitude, mesh.n_longitude))
-   
-   # RHS = 1/mesh.C_s * (solar_forcing +  6.04922 * T_ATM - 386.92082  + 334.6069 - 10.6018 * T_S_land) # Tuning mit Least Squares
-   # RHS = 1/mesh.C_s * (solar_forcing + 6.5 * T_ATM - mesh.A_up  + mesh.A_dn - 10 * T_S_land) #selbst getuned
-    #RHS = 1/0.27827695 * (solar_forcing + mesh.B_dn * T_ATM - mesh.A_up  + mesh.A_dn - mesh.B_up * T_S_land) #og
-   # RHS = 1/mesh.C_s * (solar_forcing + 2.62776805e-14 * T_ATM - 489.543109  + 328.30824  - 6.71741559 * T_S_land) 
-    #RHS = 1/mesh.C_s * (solar_forcing  - 4.3654310 * T_ATM - 691.7362  + 427.022 - 6.6669 * T_S_land)
+def surface_temp_land(T_ATM, solar_forcing, phi, mesh, Geo_dat, T_S_land, delta_t, X1,X2,X3,X4, T_S_zero, t, data, i): #calc surface temp of land without diffusion
+    
+    # T_S_land_r = T_S_land.flatten()
+    
+    #RHS = 1/heat_capacity * (solar_forcing - 2.15 *T_S_land - 210.3) # From lecture
+    #RHS = 1/mesh.C_s * (solar_forcing + mesh.B_dn * T_ATM - mesh.A_up  + mesh.A_dn - mesh.B_up * T_S_land )
+    
+    # def RHS(T_S_land_new,X1,X2,X3,X4):
+    #   RHS_ =  1/mesh.C_s * (solar_forcing[:,:,t-1].flatten() + X1 * T_ATM[:,:,t-1].flatten() - X4  + X3 - X2* T_S_land[:,:,t-1].flatten() )
+    #   T_S_land_new = T_S_land[:,:,t-1].flatten() + delta_t * RHS_
+    #   return  T_S_land_new
+    
+    # if t == 38 or t == 39  or t == 40 or t == 41: 
+    #     T_S_zero = copy.copy(data[0,:,:])
+    #     T_S_zero[np.isnan(T_S_zero)] = 0
+    # elif  t == 42 or t == 43  or t ==  44 or t == 45: 
+    #     T_S_zero = copy.copy(data[1,:,:])
+    #     T_S_zero[np.isnan(T_S_zero)] = 0
+    # elif  t == 46 or t == 47  or t == 48 or t == 1: 
+    #     T_S_zero = copy.copy(data[2,:,:])
+    #     T_S_zero[np.isnan(T_S_zero)] = 0
+    # elif  t == 2 or t == 3  or t == 4 or t == 5: 
+    #     T_S_zero = copy.copy(data[3,:,:])
+    #     T_S_zero[np.isnan(T_S_zero)] = 0
+    # elif  t == 6 or t == 7  or t == 8 or t == 9: 
+    #     T_S_zero = copy.copy(data[4,:,:])
+    #     T_S_zero[np.isnan(T_S_zero)] = 0
+    # elif  t == 10 or t == 11  or t == 12 or t == 13: 
+    #     T_S_zero = copy.copy(data[5,:,:])
+    #     T_S_zero[np.isnan(T_S_zero)] = 0
+    # elif  t == 14 or t == 15  or t == 16 or t == 17: 
+    #     T_S_zero = copy.copy(data[6,:,:])
+    #     T_S_zero[np.isnan(T_S_zero)] = 0
+    # elif  t == 18 or t == 19  or t == 20 or t == 21: 
+    #     T_S_zero = copy.copy(data[7,:,:])
+    #     T_S_zero[np.isnan(T_S_zero)] = 0
+    # elif  t == 22 or t == 23  or t == 24 or t == 25: 
+    #     T_S_zero = copy.copy(data[8,:,:])
+    #     T_S_zero[np.isnan(T_S_zero)] = 0
+    # elif  t == 26 or t == 27  or t == 28 or t == 29: 
+    #     T_S_zero = copy.copy(data[9,:,:])
+    #     T_S_zero[np.isnan(T_S_zero)] = 0
+    # elif  t == 30 or t == 31  or t == 32 or t == 33: 
+    #     T_S_zero = copy.copy(data[10,:,:])
+    #     T_S_zero[np.isnan(T_S_zero)] = 0
+    # elif  t == 34 or t == 35  or t == 36 or t ==37: 
+    #     T_S_zero = copy.copy(data[12,:,:])
+    #     T_S_zero[np.isnan(T_S_zero)] = 0  
+    # T_fit = np.zeros((65,128,48))    
+    # for t in range(48): 
+    #     if t == 38 or t == 39  or t == 40 or t == 41: 
+    #         T_S_zero = copy.copy(data[0,:,:])
+    #         T_S_zero[np.isnan(T_S_zero)] = 0
+    #         T_fit[:,:,t] = T_S_zero
+    #     elif  t == 42 or t == 43  or t ==  44 or t == 45: 
+    #         T_S_zero = copy.copy(data[1,:,:])
+    #         T_S_zero[np.isnan(T_S_zero)] = 0
+    #         T_fit[:,:,t] = T_S_zero
+    #     elif  t == 46 or t == 47  or t == 48 or t == 1: 
+    #         T_S_zero = copy.copy(data[2,:,:])
+    #         T_S_zero[np.isnan(T_S_zero)] = 0
+    #         T_fit[:,:,t] = T_S_zero
+    #     elif  t == 2 or t == 3  or t == 4 or t == 5: 
+    #         T_S_zero = copy.copy(data[3,:,:])
+    #         T_S_zero[np.isnan(T_S_zero)] = 0
+    #         T_fit[:,:,t] = T_S_zero
+    #     elif  t == 6 or t == 7  or t == 8 or t == 9: 
+    #         T_S_zero = copy.copy(data[4,:,:])
+    #         T_S_zero[np.isnan(T_S_zero)] = 0
+    #         T_fit[:,:,t] = T_S_zero
+    #     elif  t == 10 or t == 11  or t == 12 or t == 13: 
+    #         T_S_zero = copy.copy(data[5,:,:])
+    #         T_S_zero[np.isnan(T_S_zero)] = 0
+    #         T_fit[:,:,t] = T_S_zero
+    #     elif  t == 14 or t == 15  or t == 16 or t == 17: 
+    #         T_S_zero = copy.copy(data[6,:,:])
+    #         T_S_zero[np.isnan(T_S_zero)] = 0
+    #         T_fit[:,:,t] = T_S_zero
+    #     elif  t == 18 or t == 19  or t == 20 or t == 21: 
+    #         T_S_zero = copy.copy(data[7,:,:])
+    #         T_S_zero[np.isnan(T_S_zero)] = 0
+    #         T_fit[:,:,t] = T_S_zero
+    #     elif  t == 22 or t == 23  or t == 24 or t == 25: 
+    #         T_S_zero = copy.copy(data[8,:,:])
+    #         T_S_zero[np.isnan(T_S_zero)] = 0
+    #         T_fit[:,:,t] = T_S_zero
+    #     elif  t == 26 or t == 27  or t == 28 or t == 29: 
+    #         T_S_zero = copy.copy(data[9,:,:])
+    #         T_S_zero[np.isnan(T_S_zero)] = 0
+    #         T_fit[:,:,t] = T_S_zero
+    #     elif  t == 30 or t == 31  or t == 32 or t == 33: 
+    #         T_S_zero = copy.copy(data[10,:,:])
+    #         T_S_zero[np.isnan(T_S_zero)] = 0
+    #         T_fit[:,:,t] = T_S_zero
+    #     elif  t == 34 or t == 35  or t == 36 or t ==37: 
+    #         T_S_zero = copy.copy(data[12,:,:])
+    #         T_S_zero[np.isnan(T_S_zero)] = 0
+    #         T_fit[:,:,t] = T_S_zero
+    
+    #if i == 0:    
+    # x, y= np.mgrid[0:65,0:128]
+    # xdata = x.flatten()
+    # popt, pcov = curve_fit(RHS, xdata, T_S_zero.flatten(), p0 = [mesh.B_dn, mesh.A_up, mesh.A_dn, mesh.B_up])
+    # X1 =  popt[0]
+    # X2 =  popt[1]
+    # X3 =  popt[2]
+    # X4 =  popt[3]
+    RHS_e =  1/mesh.C_s * (solar_forcing[:,:,t-1] + X1 * T_ATM[:,:,t-1] - X4  + X3 - X2* T_S_land[:,:,t-1] )
+    T_S_land_new = T_S_land[:,:,t-1] + delta_t * RHS_e  
     
     for i in range(mesh.n_latitude):
         for j in range(mesh.n_longitude):
-            if Geo_dat[i,j] == 3:
-                RHS[i,j] = 1/heat_capacity[0] * (solar_forcing[i,j]  + mesh.B_dn * T_ATM[i,j] - mesh.A_up  + mesh.A_dn - mesh.B_up * T_S_land[i,j]) #og
-            elif Geo_dat[i,j] == 1:
-                RHS[i,j] = 1/heat_capacity[1] * (solar_forcing[i,j]  + mesh.B_dn * T_ATM[i,j] - mesh.A_up  + mesh.A_dn - mesh.B_up * T_S_land[i,j]) #og
-            else: 
-                RHS[i,j] = 0
-                
-    T_S_land_new = T_S_land + delta_t * RHS
-    
-    # for i in range(mesh.n_latitude):
-    #     for j in range(mesh.n_longitude):
-    #         if Geo_dat[i,j] == 5 or Geo_dat[i,j] == 2: 
-    #             T_S_land_new[i,j] = 0
-            
-    return T_S_land_new 
+              if Geo_dat[i,j] == 5: 
+                  T_S_land_new[i,j] = 0
+   
+    return T_S_land_new, X1, X2, X3, X4
 
 def surface_temp_ocean(T_ATM, T_OCN, H_I, solar_forcing, phi, mesh, Geo_dat): #calculate surface temp of ocean
     T_S = copy.copy(T_OCN)
@@ -211,7 +304,7 @@ def surface_temp_ocean(T_ATM, T_OCN, H_I, solar_forcing, phi, mesh, Geo_dat): #c
                       
     return T_S 
 
-def FreezeAndMelt(T_OCN, H_I, Hml, mesh): #calc new ice distribution
+def FreezeAndMelt(T_OCN, H_I, Hml, mesh, P_ocn): #calc new ice distribution
     T_OCN_new = copy.copy(T_OCN)
     H_I_new = copy.copy(H_I)
     z = mesh.Lf/(P_ocn.c_O*P_ocn.rhoo*Hml)
@@ -252,25 +345,26 @@ def timestep_euler_forward_H_I(mesh,T_S, T_ATM, Fb, solar_forcing, H_I, t, delta
     return H_I_new
 
 
-def Snow_melt(Geo_dat, T_ATM,T_S_land ,mesh, Snow): # Calculate if there is snow present from a given surface temperature    
-                        
-    def Model(t2m, Snow): 
-        return Snow + 1.54425e-14 - 0.00577 * t2m
+def Snow_melt(Geo_dat, T_ATM,T_S_land ,mesh): # Calculate if there is snow present from a given surface temperature
+    
+    def Model(t2m): 
+        return 1.54425e-14 - 0.00577 * t2m
 
-    pred = Model(T_S_land, Snow)
+    pred = Model(T_S_land)
 
     for i in range(mesh.n_latitude):  
        for j in range(mesh.n_longitude):
-               if pred[i,j] >0.001 and Geo_dat[i,j] == 1:  #0.001
+               if pred[i,j] >0.001 and Geo_dat[i,j] == 1: 
                    Geo_dat[i,j] = 3
                elif pred[i,j] <= 0.001 and Geo_dat[i,j] == 3: 
                    Geo_dat[i,j] = 1
                         
-    return Geo_dat, pred
+    return Geo_dat  
               
-def compute_equilibrium(mesh, diffusion_coeff_atm, heat_capacity_atm, P_ocn, diffusion_coeff_ocn, heat_capacity_ocn,  phi, true_longitude,n_timesteps, Geo_dat0, heat_capacity_s, diffusion_coeff_s, Ocean_boundary, Lakes, Surface_boundary,  c02_warming, max_iterations=10, rel_error=1e-5, verbose=True):
+def compute_equilibrium(mesh, diffusion_coeff_atm, heat_capacity_atm, P_ocn, diffusion_coeff_ocn, heat_capacity_ocn,  phi, true_longitude,n_timesteps, Geo_dat, heat_capacity_s, diffusion_coeff_s, Ocean_boundary, Lakes, Surface_boundary,c02_warming, X1,X2,X3,X4, T_S_zero, data, max_iterations=50, rel_error=1e-5, verbose=True):
     # Step size
-    delta_t = 1 / ntimesteps
+    delta_t = 1 / 48
+    ntimesteps = 48
     
     #Inital Conditions
     T_ATM = np.zeros((mesh.n_latitude, mesh.n_longitude, ntimesteps))
@@ -279,8 +373,6 @@ def compute_equilibrium(mesh, diffusion_coeff_atm, heat_capacity_atm, P_ocn, dif
     T_S_land = np.zeros((mesh.n_latitude, mesh.n_longitude, ntimesteps))
     H_I = np.zeros((mesh.n_latitude, mesh.n_longitude, ntimesteps))
     Surface_Temp = np.zeros((mesh.n_latitude,mesh.n_longitude, ntimesteps))
-    solar_forcing = np.zeros((mesh.n_latitude,mesh.n_longitude, ntimesteps))
-   
    
     
     # Area-mean in every time step
@@ -292,8 +384,8 @@ def compute_equilibrium(mesh, diffusion_coeff_atm, heat_capacity_atm, P_ocn, dif
     
     phi_index_s = np.zeros((mesh.n_longitude,ntimesteps))
     phi_index_n = np.zeros((mesh.n_longitude,ntimesteps))
-    Geo_dat = np.zeros((mesh.n_latitude,mesh.n_longitude, ntimesteps))
-    Geo_dat[:,:,-1] = Geo_dat0
+    solar_forcing = np.zeros((mesh.n_latitude, mesh.n_longitude,ntimesteps))
+    
 
     # Average temperature over all time steps from the previous iteration to approximate the error
     old_avg_atm = 0
@@ -306,7 +398,7 @@ def compute_equilibrium(mesh, diffusion_coeff_atm, heat_capacity_atm, P_ocn, dif
     Hml = P_ocn.Hml_const * np.ones((mesh.n_latitude,mesh.n_longitude)) # Can be changed 
     
     # Construct and factorize Jacobian for the atmosphere
-    jacobian_atm = ATM_fct.calc_jacobian_atm(mesh, diffusion_coeff_atm, P_atm.heat_capacity, phi, Geo_dat0)
+    jacobian_atm = ATM_fct.calc_jacobian_atm(mesh, diffusion_coeff_atm, P_atm.heat_capacity, phi, Geo_dat)
     m, n = jacobian_atm.shape
     eye = sparse.eye(m, n, format="csc")
     jacobian_atm = sparse.csc_matrix(jacobian_atm)
@@ -337,33 +429,34 @@ def compute_equilibrium(mesh, diffusion_coeff_atm, heat_capacity_atm, P_ocn, dif
         timer.start()
         for t in range(ntimesteps):    
             
-            phi_index_s[:,t], phi_i_s, phi_index_n[:,t], phi_i_n = ice_edge(H_I[:,:,t-1], phi, Geo_dat[:,:,t-1])  # new Ice_Edge Index 
+            phi_index_s[:,t], phi_i_s, phi_index_n[:,t], phi_i_n = ice_edge(H_I[:,:,t-1], phi, Geo_dat)  # new Ice_Edge Index 
             
-            Geo_dat[:,:,t] = Functions.change_geo_dat(Geo_dat[:,:,t-1], H_I[:,:,t-1], mesh) #calc new ice distribution
+            Geo_dat = Functions.change_geo_dat(Geo_dat, H_I[:,:,t-1], mesh) #calc new ice distribution
             
-           # Geo_dat[:,:,t], Snow[:,:,t] = Snow_melt(Geo_dat[:,:,t], T_ATM[:,:,t-1], Surface_Temp[:,:,t-1], mesh, Snow[:,:,t-1]) #new snow distribution
+            Geo_dat = Snow_melt(Geo_dat, T_ATM[:,:,t-1], Surface_Temp[:,:,t-1], mesh) #new snow distribution
             
-            coalbedo = Functions.calc_coalbedo(Geo_dat[:,:,t], phi_i_n, phi_i_s) #new coalbdeo dependant on the ice_edge 
+            coalbedo = Functions.calc_coalbedo(Geo_dat, phi_i_n, phi_i_s) #new coalbdeo dependant on the ice_edge 
             
             solar_forcing[:,:,t-1]  = Functions.calc_solar_forcing(insolation[:,t-1],coalbedo, mesh)        
             
-            T_ATM[:,:,t] = ATM_fct.timestep_euler_backward_atm(jacobian_atm, 1/ntimesteps, T_ATM[:,:,t-1], Surface_Temp[:,:,t-1], mesh, P_atm.heat_capacity, c02_warming, Geo_dat[:,:,t])
+            T_ATM[:,:,t] = ATM_fct.timestep_euler_backward_atm(jacobian_atm, 1/ntimesteps, T_ATM[:,:,t-1], Surface_Temp[:,:,t-1], mesh, P_atm.heat_capacity, c02_warming, Geo_dat)
             
-            T_OCN[:,:,t] = OCN_fct.timestep_euler_backward_ocn(jacobian_ocn, 1/ntimesteps, T_OCN[:,:,t-1], T_S_Ocean[:,:,t-1], T_ATM[:,:,t-1], mesh, heat_capacity_ocn, solar_forcing[:,:,t-1], Fb, H_I[:,:,t-1], Geo_dat[:,:,t], Lakes)
-                       
+            T_OCN[:,:,t] = OCN_fct.timestep_euler_backward_ocn(jacobian_ocn, 1/ntimesteps, T_OCN[:,:,t-1], T_S_Ocean[:,:,t-1], T_ATM[:,:,t-1], mesh, heat_capacity_ocn, solar_forcing[:,:,t-1], Fb, H_I[:,:,t-1], Geo_dat, Lakes)
+            
+            
             H_I[:,:,t] = timestep_euler_forward_H_I(mesh,T_S_Ocean[:,:,t-1], T_ATM[:,:,t-1], Fb, solar_forcing[:,:,t-1], H_I[:,:,t-1], t, delta_t)
              
-            T_OCN[:,:,t], H_I[:,:,t] = FreezeAndMelt(T_OCN[:,:,t], H_I[:,:,t], Hml, mesh) 
+            T_OCN[:,:,t], H_I[:,:,t] = FreezeAndMelt(T_OCN[:,:,t], H_I[:,:,t], Hml, mesh, P_ocn) 
              
-            #T_S_land[:,:,t] = Surface_fct.timestep_euler_backward_s(jacobian_s, 1/ntimesteps, T_S_land[:,:,t-1], T_ATM[:,:,t-1], t, mesh, solar_forcing[:,:,t-1], Geo_dat[:,:,t],  heat_capacity_s) #with diffusion
+            #T_S_land[:,:,t] = Surface_fct.timestep_euler_backward_s(jacobian_s, 1/ntimesteps, T_S_land[:,:,t-1], T_ATM[:,:,t-1], t, mesh, solar_forcing, Geo_dat,  heat_capacity_s) #with diffusion
     
-            T_S_land[:,:,t] = surface_temp_land(T_ATM[:,:,t], solar_forcing[:,:,t-1], phi, mesh, Geo_dat[:,:,t], T_S_land[:,:,t-1], delta_t, heat_capacity_s) #without diffusion
+            T_S_land[:,:,t],X1, X2, x3, X4 = surface_temp_land(T_ATM, solar_forcing, phi, mesh, Geo_dat, T_S_land, delta_t, X1,X2,X3,X4, T_S_zero, t, data, i) #without diffusion
             
             solar_forcing_new = Functions.calc_solar_forcing(insolation[:,t],coalbedo, mesh)   
            
-            T_S_Ocean[:,:,t] = surface_temp_ocean(T_ATM[:,:,t], T_OCN[:,:,t], H_I[:,:,t], solar_forcing_new, phi, mesh, Geo_dat[:,:,t]) #original surface temp from Ocean Model --> is just for the ocean surface temperatue
+            T_S_Ocean[:,:,t] = surface_temp_ocean(T_ATM[:,:,t], T_OCN[:,:,t], H_I[:,:,t], solar_forcing_new, phi, mesh, Geo_dat) #original surface temp from Ocean Model --> is just for the ocean surface temperatue
            
-            Surface_Temp[:,:,t] = Functions.unite_surface_temp(T_S_Ocean[:,:,t] , T_S_land[:,:,t] , mesh, Geo_dat[:,:,t])
+            Surface_Temp[:,:,t] = Functions.unite_surface_temp(T_S_Ocean[:,:,t] , T_S_land[:,:,t] , mesh, Geo_dat)
             
             temp_atm[t] = Functions.calc_mean(T_ATM[:,:,t], mesh.area)
             temp_ocn[t] = Functions.calc_mean_ocn(T_OCN[:,:,t], mesh.area)
@@ -384,6 +477,7 @@ def compute_equilibrium(mesh, diffusion_coeff_atm, heat_capacity_atm, P_ocn, dif
         print("Fehler Surface: ",np.abs(avg_temperature_s - old_avg_s))
         print("Fehler Ocean: ",np.abs(avg_temperature_ocn - old_avg_ocn))
         print("Fehler Land: ",np.abs(avg_temperature_land - old_avg_land))
+        print("X1: ",X1, " X2: ", X2, " X3: ", X3, " X4: ",X4)
         if (np.abs(avg_temperature_atm - old_avg_atm)< rel_error) and (np.abs(avg_temperature_ocn - old_avg_ocn)< rel_error)  and  (np.abs(avg_temperature_s - old_avg_s)< rel_error) and (np.abs(avg_H_I - old_avg_H_I) < rel_error):
             # We can assume that the error is sufficiently small now.
             verbose and print("Equilibrium reached!")
@@ -398,31 +492,41 @@ def compute_equilibrium(mesh, diffusion_coeff_atm, heat_capacity_atm, P_ocn, dif
               old_avg_land = avg_temperature_land
   
          
-    return  T_ATM, T_S_land, T_S_Ocean, T_OCN, H_I, Surface_Temp, phi_index_s, phi_index_n, Geo_dat, solar_forcing
+    return  T_ATM, T_S_land, T_S_Ocean, T_OCN, H_I, Surface_Temp, phi_index_s, phi_index_n, X1, X2, X3, X4
        
+
+def equ_test(T_S_land,X1,X2,X3,X4):
+    
+    T_ATM, T_S_land, T_S, T_OCN, H_I, Surface_Temp, phi_index_s, phi_index_n, X1, X2, X3, X4  = compute_equilibrium( mesh, diffusion_coeff_atm, P_atm.heat_capacity, P_ocn, diffusion_coeff_ocn, heat_capacity_ocn, phi, true_longitude, ntimesteps, Geo_dat, heat_capacity_s, diffusion_coeff_s, Ocean_boundary, Lakes, Surface_boundary, c02_warming,X1,X2,X3,X4,T_S_zero, data )
+   
+    return T_S_land.flatten()
+
 # Run code
 if __name__ == '__main__':
-    start = time.time() 
-    mesh = Mesh()
+    # start = time.time()  
+   # file_path = '/Users/ricij/Documents/Universität/Master/Masterarbeit/VL_Klimamodellierung/input/The_World128x65.dat.txt'  
+    #Geo_dat = Functions.read_geography(file_path)
+    #Geo_dat = Functions.get_data_with_new_resolution(Geo_dat_old, 129)
+
     file_path = '/Users/ricij/Documents/Universität/Master/Masterarbeit/VL_Klimamodellierung/input/The_World128x65.dat.txt'  
-    Geo_dat = Functions.read_geography(file_path)
+    mesh = Mesh()
     #Geo_dat = Functions.get_data_with_new_resolution(Geo_dat_old, 129)
     test_file = "/Users/ricij/Documents/Universität/Master/Masterarbeit/VL_Klimamodellierung/Version_Paper_2D/netCDF_Data/Era5_land_t2m_celsius_grid.nc"    
-    data, lat , long = Functions.transform_net_cdf(test_file, mesh)
-    #T_S_land_avg_ = [Functions.calc_mean_ocn(data[t, :], mesh.area) for t in range(48)] #da Daten im Januar starten
-    
-    #Geo_dat = Functions.Geo_dat_from_NCDF(data, mesh) 
-
-    
+    data, lat , long = Functions.transform_net_cdf(test_file,mesh)
+    Geo_dat = Functions.Geo_dat_from_NCDF(data, mesh)
+  
     Ocean_boundary = Functions.Get_Ocean_Boundary_Distribution(Geo_dat)
     Surface_boundary = Functions.Get_Surface_Boundary_Distribution(Geo_dat)
-   
+
+    mesh = Mesh()
      
-    #heat_capacity_s = Functions.calc_heat_capacity(Geo_dat)
+    heat_capacity_s = Functions.calc_heat_capacity(Geo_dat)
    # diffusion_coeff_s = Functions.calc_diffusion_coefficients(Geo_dat)  #noch nicht eingebaut
     diffusion_coeff_s = np.ones((mesh.n_latitude, mesh.n_longitude)) * 0.18
-    
-    heat_capacity_s = np.array([mesh.C_snow,mesh.C_s]) #erst Schnee dann Land
+    # for i in range(mesh.n_latitude):
+    #     for j in range(mesh.n_longitude):
+    #           if Geo_dat[i,j] == 5 or  Geo_dat[i,j] == 2:
+    #               diffusion_coeff_s[i,j] = 0
     
     Lakes =  Functions.LandDstr_wLakes(Geo_dat)
     
@@ -432,13 +536,13 @@ if __name__ == '__main__':
     true_longitude = Functions.calc_lambda(dt,  ntimesteps, ecc =  0.016740, per = 1.783037)
     
    
-    co2_ppm = 388.91 
+    co2_ppm = 315.0
     c02_warming = Functions.calc_radiative_cooling_co2(co2_ppm)
   
     
     phi = np.linspace(np.pi/2,-np.pi/2,mesh.n_latitude) #from 90° south to 90° north
 
-    phi_i_deg_n = 75 #inital value for the latitude of the ice-edge 
+    phi_i_deg_n = 75 #inital value for the latzitude of the ice-edge 
     phi_i_deg_s = 75 
     
     P_atm = P_atm() #Parameters for the atmosphere
@@ -449,130 +553,24 @@ if __name__ == '__main__':
     heat_capacity_ocn = P_ocn.c_O * P_ocn.rhoo * P_ocn.Hml_const * np.ones((mesh.n_latitude, mesh.n_longitude))  # Hml can also be variable
     diffusion_coeff_ocn = heat_capacity_ocn * P_ocn.K_O / mesh.RE**2  #Diffusion coefficient
    
-                    
-    ###### run model ######
-    T_ATM, T_S_land, T_S_Ocean, T_OCN, H_I, Surface_Temp, phi_index_s, phi_index_n, Geo_dat, solar_forcing  = compute_equilibrium( mesh, diffusion_coeff_atm, P_atm.heat_capacity, P_ocn, diffusion_coeff_ocn, heat_capacity_ocn, phi, true_longitude, ntimesteps, Geo_dat, heat_capacity_s, diffusion_coeff_s, Ocean_boundary, Lakes, Surface_boundary,  c02_warming)
-
-    end = time.time()
-    print(end - start)
-    
-    ##################################################################################################################################
-    ############################################################## PLOTS #############################################################
-    ##################################################################################################################################
-    
-    annual_mean_temperature_north_ = [Functions.calc_mean_north(Surface_Temp[:, :, t], mesh.area) for t in range(ntimesteps)]
-    annual_mean_temperature_south_ = [Functions.calc_mean_south(Surface_Temp[:, :, t], mesh.area) for t in range(ntimesteps)]
-    annual_mean_temperature_total_ = [Functions.calc_mean(Surface_Temp[:, :, t], mesh.area) for t in range(ntimesteps)]
-
-    average_temperature_north_ = np.sum(annual_mean_temperature_north_) / ntimesteps
-    average_temperature_south_ = np.sum(annual_mean_temperature_south_) / ntimesteps
-    average_temperature_total_ = np.sum(annual_mean_temperature_total_) / ntimesteps
-
-    Functions.plot_annual_temperature_north_south(annual_mean_temperature_north_, annual_mean_temperature_south_,
-                                        annual_mean_temperature_total_, average_temperature_north_,
-                                        average_temperature_south_, average_temperature_total_, "Annual Surface Temperature")
-    
-    annual_mean_temperature_north_ = [Functions.calc_mean_north(T_ATM[:, :, t], mesh.area) for t in range(ntimesteps)]
-    annual_mean_temperature_south_ = [Functions.calc_mean_south(T_ATM[:, :, t], mesh.area) for t in range(ntimesteps)]
-    annual_mean_temperature_total_ = [Functions.calc_mean(T_ATM[:, :, t], mesh.area) for t in range(ntimesteps)]
-
-    average_temperature_north_ = np.sum(annual_mean_temperature_north_) / ntimesteps
-    average_temperature_south_ = np.sum(annual_mean_temperature_south_) / ntimesteps
-    average_temperature_total_ = np.sum(annual_mean_temperature_total_) / ntimesteps
-
-    Functions.plot_annual_temperature_north_south(annual_mean_temperature_north_, annual_mean_temperature_south_,
-                                        annual_mean_temperature_total_, average_temperature_north_,
-                                        average_temperature_south_, average_temperature_total_, "Annual Atmosphere Temperature")
+    X1 = mesh.B_dn
+    X2 = mesh.B_up 
+    X3 = mesh.A_dn 
+    X4 = mesh.A_up  #TEST
+    T_S_zero = copy.copy(data)
+    T_S_zero[np.isnan(T_S_zero)] = 0
     
    
-    annual_mean_temperature_north_ = [Functions.calc_mean_ocn_north(T_OCN[:, :, t], mesh.area) for t in range(ntimesteps)]
-    annual_mean_temperature_south_ = [Functions.calc_mean_ocn_south(T_OCN[:, :, t], mesh.area) for t in range(ntimesteps)]
-    annual_mean_temperature_total_ = [Functions.calc_mean_ocn(T_OCN[:, :, t], mesh.area) for t in range(ntimesteps)]
-
-    average_temperature_north_ = np.sum(annual_mean_temperature_north_) / ntimesteps
-    average_temperature_south_ = np.sum(annual_mean_temperature_south_) / ntimesteps
-    average_temperature_total_ = np.sum(annual_mean_temperature_total_) / ntimesteps
-
-    Functions.plot_annual_temperature_north_south(annual_mean_temperature_north_, annual_mean_temperature_south_,
-                                        annual_mean_temperature_total_, average_temperature_north_,
-                                        average_temperature_south_, average_temperature_total_, "Annual Ocean Temperature")
+    x, y= np.mgrid[0:65,0:128]
+    xdata = np.vstack((x.ravel(), y.ravel()))
+    param_bounds=[(0,None),(None,0),(0,None),(None,0)] 
+    popt, pcov = curve_fit(equ_test, xdata, T_S_zero.flatten (),bounds=([0,-np.inf,0,-np.inf], [np.inf, 0, np.inf,0]) )
     
-    
-    annual_mean_temperature_north_ = [Functions.calc_mean_ocn_north(T_S_Ocean[:, :, t], mesh.area) for t in range(ntimesteps)]
-    annual_mean_temperature_south_ = [Functions.calc_mean_ocn_south(T_S_Ocean[:, :, t], mesh.area) for t in range(ntimesteps)]
-    annual_mean_temperature_total_ = [Functions.calc_mean_ocn(T_S_Ocean[:, :, t], mesh.area) for t in range(ntimesteps)]
-
-    average_temperature_north_ = np.sum(annual_mean_temperature_north_) / ntimesteps
-    average_temperature_south_ = np.sum(annual_mean_temperature_south_) / ntimesteps
-    average_temperature_total_ = np.sum(annual_mean_temperature_total_) / ntimesteps
-
-    Functions.plot_annual_temperature_north_south(annual_mean_temperature_north_, annual_mean_temperature_south_,
-                                        annual_mean_temperature_total_, average_temperature_north_,
-                                        average_temperature_south_, average_temperature_total_, "Annual Ocean  Surface Temperature")
-    
-    
-    annual_mean_temperature_north_land = [Functions.calc_mean_ocn_north(T_S_land[:, :, t], mesh.area) for t in range(ntimesteps)]
-    annual_mean_temperature_south_land = [Functions.calc_mean_ocn_south(T_S_land[:, :, t], mesh.area) for t in range(ntimesteps)]
-    annual_mean_temperature_total_land = [Functions.calc_mean_ocn(T_S_land[:, :, t], mesh.area) for t in range(ntimesteps)]
-
-    average_temperature_north_land = np.sum(annual_mean_temperature_north_land) / ntimesteps
-    average_temperature_south_land = np.sum(annual_mean_temperature_south_land) / ntimesteps
-    average_temperature_total_land = np.sum(annual_mean_temperature_total_land) / ntimesteps
-
-    Functions.plot_annual_temperature_north_south(annual_mean_temperature_north_land, annual_mean_temperature_south_land,
-                                        annual_mean_temperature_total_land, average_temperature_north_land,
-                                        average_temperature_south_land, average_temperature_total_land, "Annual Land Surface Temperature")
-
-
-    annual_temperature_cologne = (Surface_Temp[14, 67, :] + Surface_Temp[14, 68, :]) / 2
-    #annual_temperature_cologne = (Surface_Temp[20, 101, :] + Surface_Temp[21, 101, :]) / 2
-    average_temperature_cologne = np.sum(annual_temperature_cologne) / ntimesteps
-
-    Functions.plot_temperature_time(annual_temperature_cologne, average_temperature_cologne, "Annual temperature in Cologne")
-    
-    T_OCN_zero = copy.copy(T_OCN)
-    T_OCN_zero[np.isnan(T_OCN_zero)] = 0
-    
-    T_S_Ocean_zero = copy.copy(T_S_Ocean)
-    T_S_Ocean_zero[np.isnan(T_S_Ocean_zero)] = 0
-    
-    Functions.plot_inital_temperature(np.mean(T_OCN_zero, axis=2), mesh.Tf , "Ocean temperature")
-    Functions.plot_inital_temperature(np.mean(Surface_Temp, axis=2), mesh.Tf , "Surface temperature")
-    Functions.plot_inital_temperature(np.mean(T_ATM, axis=2), mesh.Tf , "Atmospheretemperature")
-    
-    Functions.plot_annual_temperature(np.mean(np.mean(T_OCN_zero, axis=1), axis=1),np.mean(T_OCN_zero),"Annual Temp Latitude Ocean ")
-    Functions.plot_annual_temperature(np.mean(np.mean(T_S_Ocean_zero, axis=1), axis=1),np.mean(T_S_Ocean_zero),"Annual Temp Latitude Ocean Surface ")
-    Functions.plot_annual_temperature(np.mean(np.mean(Surface_Temp, axis=1), axis=1),np.mean(Surface_Temp),"Annual Temp Latitude Surface ")
-
-    #Plot for ice thickness (Average is only calculated where ice is present)
-    H_I_nan = H_I
-    H_I_nan[H_I_nan == 0] = np.NAN
-
-    annual_mean_H_I_north =[Functions.calc_mean_ocn_north(H_I_nan[:,:,t], mesh.area) for t in range(ntimesteps)]
-    Functions.plot_ice_thickness_time(annual_mean_H_I_north, np.mean(annual_mean_H_I_north) , "Mean Ice Thickness North")
-    
-    annual_mean_H_I_south =[Functions.calc_mean_ocn_south(H_I_nan[:,:,t], mesh.area) for t in range(ntimesteps)]
-    Functions.plot_ice_thickness_time(annual_mean_H_I_south, np.mean(annual_mean_H_I_south) , "Mean Ice Thickness South") 
-    
-    
-    
-    Functions.plot_inital_temperature(Surface_Temp[:,:,1], mesh.Tf , "Surface temperature March")
-     
-    
-    #Plot temperature for each time stepT
-    filenames = []
-    for ts in range(48):
-        filename_ = Functions.plot_temperature(Surface_Temp, Geo_dat[:,:,ts], ts, show_plot=False)
-        filenames.append(filename_)
-    
-    import imageio
-    # Build GIF
-    frames = [imageio.v3.imread(filename_) for filename_ in filenames]
-    imageio.mimsave("annual_temperature.gif", frames)
-
-    import os
-    # Remove files
-    for filename_ in set(filenames):
-        os.remove(filename_)   
-        
-  
+   
+                    
+    ###### run model ######
+    # T_ATM, T_S_land, T_S, T_OCN, H_I, Surface_Temp, phi_index_s, phi_index_n, X1, X2, X3, X4  = compute_equilibrium( mesh, diffusion_coeff_atm, P_atm.heat_capacity, P_ocn, diffusion_coeff_ocn, heat_capacity_ocn, phi, true_longitude, ntimesteps, Geo_dat, heat_capacity_s, diffusion_coeff_s, Ocean_boundary, Lakes, Surface_boundary, c02_warming,X1,X2,X3,X4,T_S_zero, data )
+   
+    # end = time.time()
+    # print(end - start)
+ 

@@ -12,7 +12,7 @@ from scipy import special
 
 import Functions
 
-
+#used for an EBM with only ocean --> now we use function in Functions
 def calc_coalbedo(phi, phi_i_n, phi_i_s, mesh): #Calculation of the coalbedo where phi_i_n and phi_i_s are the latitudes wich have ice and are closest to the equator
     a0 = 0.72
     ai = 0.36
@@ -32,7 +32,8 @@ def calc_coalbedo(phi, phi_i_n, phi_i_s, mesh): #Calculation of the coalbedo whe
     return coalbedo
 
 
-
+#Ocean Circulation (flux from the depth of the ocean) --> only imrportant for actual ocean (not lakes)
+#Analog to the function in the paper by Aylmer --> is similar for every longitude
 def BasalFlux(phi, mesh):
     def f(phi):
         return -(1.3E16/(2*np.pi*6.37E6**2)) * np.cos(phi)**8 * (1-11*np.sin(phi)**2)
@@ -45,6 +46,7 @@ def BasalFlux(phi, mesh):
     return F_b
 
 
+#Jacobi Matrix for solving the Ocean-EBM 
 def calc_jacobian_ocn(mesh, diffusion_coeff, heat_capacity, phi, Ocean_boundary):
     jacobian = np.zeros((mesh.ndof, mesh.ndof))
     test_temperature = np.zeros((mesh.n_latitude, mesh.n_longitude))
@@ -52,15 +54,15 @@ def calc_jacobian_ocn(mesh, diffusion_coeff, heat_capacity, phi, Ocean_boundary)
     index = 0
     for j in range(mesh.n_latitude):
         for i in range(mesh.n_longitude):
-        
+             
             if (Ocean_boundary[j,i] == 5) or (Ocean_boundary[j,i] == 2) or (Ocean_boundary[j,i] == 0): #only calculate diffusion for Ocean 
-             test_temperature[j, i] = 1.0
+                test_temperature[j, i] = 1.0
             
-             diffusion_op = Functions.calc_diffusion_operator_ocn(mesh, diffusion_coeff, test_temperature, Ocean_boundary, i, j)
+                diffusion_op = Functions.calc_diffusion_operator_ocn(mesh, diffusion_coeff, test_temperature, Ocean_boundary)
            
-             op = diffusion_op/heat_capacity
-               
-            elif (Ocean_boundary[j,i] == 1) or (Ocean_boundary[j,i] == 3) : 
+                op = diffusion_op/heat_capacity
+                   
+            elif (Ocean_boundary[j,i] == 1) or (Ocean_boundary[j,i] == 3) : #for land and snow we do not have diffusion of the ocean
                 op = np.zeros((mesh.n_latitude,mesh.n_longitude)) 
                
             # Convert matrix to vector
@@ -73,16 +75,16 @@ def calc_jacobian_ocn(mesh, diffusion_coeff, heat_capacity, phi, Ocean_boundary)
     return jacobian
 
 
-def timestep_euler_backward_ocn(solve, delta_t, T_OCN, T_S, T_ATM, t, mesh, heat_capacity, solar_forcing, F_b, H_I,Geo_dat, Ocean_boundary, Lakes):
+def timestep_euler_backward_ocn(solve, delta_t, T_OCN, T_S, T_ATM, mesh, heat_capacity, solar_forcing, F_b, H_I, Geo_dat, Lakes):
     
-    source_terms = ((solar_forcing - mesh.A_up - mesh.B_up *T_S + mesh.A_dn + mesh.B_dn * T_ATM + F_b) / heat_capacity) * (H_I <=0)
+    source_terms = ((solar_forcing - (mesh.A_up) - (mesh.B_up) * T_S + (mesh.A_dn) + (mesh.B_dn) * T_ATM + F_b) * 1/heat_capacity) * (H_I <=0)
     
     for i in range (mesh.n_latitude):
         for j in range(mesh.n_longitude):
-            if (Geo_dat[i,j]) ==1 or Geo_dat[i,j] == 3:
-                source_terms[i,j] = 0 
-            # if  Lakes[i,j] == 4: 
-            #     F_b[i,j] = 0
+            if Geo_dat[i,j] == 1 or Geo_dat[i,j] == 3:
+                source_terms[i,j] = 0
+            if  Lakes[i,j] == 4:  #because lakes to not have a deep ocean circulation --> no term Fb should be in the source terms for those points
+                  F_b[i,j] = 0
     
     T_OCN_New = np.reshape(solve((T_OCN + delta_t * source_terms).flatten()), (mesh.n_latitude, mesh.n_longitude))
 

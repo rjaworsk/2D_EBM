@@ -10,9 +10,76 @@ import matplotlib.pyplot as plt
 import numpy as np
 from numba import njit
 from scipy import special
+import matplotlib.colors as colors
 import copy
+from sklearn.neighbors import KNeighborsRegressor
+import xarray as xr
 
-def unite_surface_temp(T_S_OCN, T_S_land, mesh, Geo_dat): #unite the surface temperature of the ocean and the land in one variable
+# As climate data come sin netcdf format we have to transform  it first 
+def transform_net_cdf(file, mesh, variable='temp'): 
+    nc_file = xr.open_dataset(file)
+    data_np = np.array(nc_file[variable])
+    data_temp = np.zeros(data_np.shape)
+    lat = np.array(nc_file["lat"])
+    long = np.array(nc_file["lon"])
+    # Have to flip the array because longitude starts at 0
+    data_temp[:,:,:mesh.n_latitude-1] = data_np[:,:,mesh.n_latitude-1:]
+    data_temp[:,:,mesh.n_latitude-1:] = data_np[:,:,:mesh.n_latitude-1]
+    data_temp = np.flip(data_temp,1)
+    return data_temp, lat, long
+
+def transform_net_cdf_time(file, mesh, variable='temp'): 
+    nc_file = xr.open_dataset(file)
+    data_np = np.array(nc_file[variable])
+    time, lat, long = data_np.shape
+    data_temp = np.zeros((lat, long))
+    # Have to flip the array because longitude starts at 0
+    data_temp[:,:mesh.n_latitude-1] = data_np[0,:,mesh.n_latitude-1:]
+    data_temp[:,mesh.n_latitude-1:] = data_np[0,:,:mesh.n_latitude-1]
+    data_temp = np.flip(data_temp,1)
+    return data_temp
+    
+    
+def Geo_dat_from_NCDF(data, mesh):
+    Geo_dat = np.zeros((mesh.n_latitude, mesh.n_longitude))
+    for i in range(mesh.n_latitude):
+        for j in range(mesh.n_longitude): 
+              if np.isnan(data[0,i,j]):
+                  Geo_dat[i,j] = 5
+              else: 
+                  Geo_dat[i,j] = 1
+                                    
+    return Geo_dat 
+    
+
+# def get_three_dim_coordinates(nlatitude, nlongitude):
+#     #the function creates for a given nlatitude and nlongtude a (flattened) numpy array containing the x,y,z coordinates of the given grid (with a radius of one)
+#     def xyz_fun(colat, lon):
+#         x = np.sin(colat)*np.cos(lon)
+#         y = np.sin(colat)*np.sin(lon)
+#         z = np.cos(colat)
+#         return [x, y, z]
+
+#     x_lon = np.linspace(-np.pi, np.pi, nlongitude, endpoint=False)
+#     y_co_lat = np.linspace(0, np.pi, nlatitude)
+#     three_dim_coordinates = np.array([xyz_fun(colat, lon) for colat in y_co_lat for lon in x_lon])
+#     return three_dim_coordinates
+
+# def get_data_with_new_resolution(data_old, nlat_new):
+#     #The function first projects the old data onto a ball with radius of one, trains a KNN-Model with K=1 with the projected coordinates as x/input and the old data as y/response. Then it predicts the values of the new data with the model and the three-dimensional coordinates of the new grid and returns them.
+#     nlat_old, nlong_old = data_old.shape
+#     coordinates_old = get_three_dim_coordinates(nlat_old, nlong_old)
+#     old_data_flat= np.array(data_old).flatten()
+#     knn_model = KNeighborsRegressor(n_neighbors=1)
+#     knn_model.fit(coordinates_old, old_data_flat)
+
+#     nlon_new = 2*(nlat_new-1)
+#     coordinates_new = get_three_dim_coordinates(nlat_new, nlon_new)
+#     data_new_flat = knn_model.predict(coordinates_new)
+#     data_new = np.reshape(data_new_flat, (nlat_new, nlon_new))
+#     return data_new
+
+def unite_surface_temp(T_S_OCN, T_S_land, mesh, Geo_dat): # Unite the surface temperature of the ocean and the surface temperature on land in one variable
     
     Surface_Temp = np.zeros((mesh.n_latitude,mesh.n_longitude))
     for i in range(mesh.n_latitude):
@@ -24,7 +91,7 @@ def unite_surface_temp(T_S_OCN, T_S_land, mesh, Geo_dat): #unite the surface tem
                     
     return Surface_Temp
 
-def LandDstr_wLakes(Geo_dat):
+def LandDstr_wLakes(Geo_dat): # Change the array of the world map to include lakes to differentiate between lakes and ocean
     dstr = copy.copy(Geo_dat)
     dstr[6,23] = 4
     dstr[6,24] = 4
@@ -125,10 +192,10 @@ def LandDstr_wLakes(Geo_dat):
     dstr[32,75] = 4
     return dstr
 
-def read_geography(filepath):
+def read_geography(filepath): # Read world map as an array
     return np.genfromtxt(filepath, dtype=np.int8)
 
-def robinson_projection(nlatitude, nlongitude):
+def robinson_projection(nlatitude, nlongitude): # Only used for plotting
     def x_fun(lon, lat):
         return lon / np.pi * (0.0379 * lat ** 6 - 0.15 * lat ** 4 - 0.367 * lat ** 2 + 2.666)
 
@@ -147,7 +214,6 @@ def robinson_projection(nlatitude, nlongitude):
 
 
 # Plot data at grid points in Robinson projection. Return the colorbar for customization.
-# This will be reused in other milestones.
 def plot_robinson_projection(data, title, plot_continents=False, geo_dat=[], **kwargs):
     # Get the coordinates for the Robinson projection.
     nlatitude, nlongitude = data.shape
@@ -182,20 +248,16 @@ def plot_robinson_projection(data, title, plot_continents=False, geo_dat=[], **k
 
     return cbar
 
-def read_true_longitude(filepath):
-    return np.genfromtxt(filepath, dtype=np.float64) #from lecture
+def calc_radiative_cooling_co2(co2_concentration, co2_concentration_base=315.0):
+    # Old radiative cooling base
+    #radiative_cooling_base=210.3
+    return  5.35 * np.log(co2_concentration / co2_concentration_base)  # From lecture but we have different radiative cooling base now
 
-
-def calc_radiative_cooling_co2(co2_concentration, co2_concentration_base=315.0,  
-                               radiative_cooling_base=210.3):
-    #return radiative_cooling_base - 5.35 * np.log(co2_concentration / co2_concentration_base)  #from lecture
-    return  5.35 * np.log(co2_concentration / co2_concentration_base)  #from lecture
-
-def calc_coalbedo(geo_dat, phi_i_n, phi_i_s):
+def calc_coalbedo(geo_dat, phi_i_n, phi_i_s, snow_edge, Albedo_up, Albedo_dn):
     def legendre(latitude):
         return 0.5 * (3 * np.sin(latitude) ** 2 - 1)
     
-    def coalbedo_ocn(latitude, phi_i_n, phi_i_s): #calculation in the paper 
+    def coalbedo_ocn(latitude, phi_i_n, phi_i_s): # Calculation of the coalbedo in the paper 
         a0 = 0.72
         ai = 0.36
         a2 = (a0 - ai)/((np.pi/2)**2)
@@ -203,36 +265,70 @@ def calc_coalbedo(geo_dat, phi_i_n, phi_i_s):
         if latitude > 0:
             coalbedo =  0.5 * ((a0-a2*latitude**2 + ai) - (a0-a2*latitude**2 - ai) * special.erf((latitude-phi_i_n)/0.04)) #North
         else:
+            
+            # if phi_i_s < -1.325359400733194: 
+            #    ice_lat = -1.325359400733194
+            # else:
+            #     ice_lat = phi_i_s
             coalbedo = 0.5 * ((a0-a2*latitude**2 + ai) - (a0-a2*latitude**2 - ai) * special.erf((phi_i_s-latitude)/0.04)) #South
         
         return coalbedo     
+    
+    def coalbedo_land(latitude, phi_i_n, phi_i_s, snow_edge, Albedo_up, Albedo_dn): # Calculation of the coalbedo in the paper 
+        a0 = 0.72
+        ai = 0.25
+        a2 = (a0 - ai)/((np.pi/2)**2)
+        
+        if latitude > 0:
+            if snow_edge == 1.5707963267948966: 
+                snow_lat = 1.227184630308513
+            else:     
+                snow_lat  = snow_edge
+            #snow_lat = 1.3744467859455345
+            coalbedo =  0.5 * ((a0-a2*latitude**2 + ai) - (a0-a2*latitude**2 - ai) * special.erf((latitude - snow_lat )/0.04)) #North
+        else:
+            #if phi_i_s ==  -1.5707963267948966:
+               lat_snow_south =  -1.4726215563702154 #-1.3744467859455343
+               coalbedo = 0.5 * ((a0-a2*latitude**2 + ai) - (a0-a2*latitude**2 - ai) * special.erf((lat_snow_south-latitude)/0.04)) #South
+            #else: 
+             #  coalbedo = 0.5 * ((a0-a2*latitude**2 + ai) - (a0-a2*latitude**2 - ai) *special.erf((phi_i_s-latitude)/0.04)) #South
+            
+        return coalbedo     
         
 
-    def coalbedo(surface_type, latitude, phi_i_n, phi_i_s):
-        if surface_type == 1:
-            return 1-(0.3 + 0.12 * legendre(latitude))
-        elif surface_type == 2:
-            #return 0.4
+    def coalbedo(surface_type, latitude, phi_i_n, phi_i_s, snow_edge, Albedo_up, Albedo_dn):
+        if surface_type == 1: #Lecture
+          #return 1-(0.3 + 0.12 * legendre(latitude)) 
+         return  coalbedo_land(latitude, phi_i_n,phi_i_s,snow_edge, Albedo_up, Albedo_dn)
+           # return 1-(Albedo_ERA5[lat,long])
+    
+        elif surface_type == 2: #Lecture
+            #return 0.4 
             return coalbedo_ocn(latitude, phi_i_n, phi_i_s)
         elif surface_type == 3:
-            return 0.25
+          #  return 0.2 #Lecture
+            return coalbedo_land(latitude, phi_i_n,phi_i_s, snow_edge, Albedo_up, Albedo_dn)
+            #return 1-Albedo_ERA5[lat,long]
         elif surface_type == 5:
+           # return 1-(0.29 + 0.12 * legendre(latitude)) #coalbedo in lecture 
+           return coalbedo_ocn(latitude, phi_i_n,phi_i_s)
+        elif surface_type == 4:
             #return 1-(0.29 + 0.12 * legendre(latitude)) #coalbedo in lecture 
             return coalbedo_ocn(latitude, phi_i_n,phi_i_s)
         else:
             raise ValueError(f"Unknown surface type {surface_type}.")
 
     nlatitude, nlongitude = geo_dat.shape
-    y_lat = np.linspace(np.pi/2,- np.pi/2, nlatitude)
+    y_lat = np.linspace(np.pi/2, -np.pi/2, nlatitude)
 
     # Map surface type to albedo.
-    return np.array([[coalbedo(geo_dat[i, j], y_lat[i], phi_i_n[j], phi_i_s[j])
+    return np.array([[coalbedo(geo_dat[i, j], y_lat[i], phi_i_n[j], phi_i_s[j], snow_edge[j], Albedo_up, Albedo_dn)
                       for j in range(nlongitude)]
                      for i in range(nlatitude)])
 
  
     
-def change_geo_dat(Geo_dat, H_I, mesh): #change in sea ice distribution due to change in temperature
+def change_geo_dat(Geo_dat, H_I, mesh): # Change in sea ice distribution due to change in temperature
    
     for  j in range(mesh.n_longitude):
         for i in  range(mesh.n_latitude):
@@ -240,22 +336,12 @@ def change_geo_dat(Geo_dat, H_I, mesh): #change in sea ice distribution due to c
                 Geo_dat[i,j] = 2
                 
             if H_I[i,j] <= 0 and Geo_dat[i,j] == 2: 
-                Geo_dat[i,j] = 5
+                Geo_dat[i,j] = 5 
                 
-     
     return Geo_dat 
 
-def Get_Ocean_Land_distribution(Geo_dat): 
-    latitude, longitude = Geo_dat.shape
-    OCN_LAND_DSTB = copy.copy(Geo_dat)
-    for i in range(latitude):
-        for j in range(longitude):
-            if Geo_dat[i,j] == 2: 
-                OCN_LAND_DSTB[i,j] = 5
-                
-    return OCN_LAND_DSTB  
 
-def Get_Ocean_Boundary_Distribution(Geo_dat):      
+def Get_Ocean_Boundary_Distribution(Geo_dat): # Calculate all the points on the world map where the ocean is connected to the land --> this is needed to adjust the diffusion operator properly   
     latitude, longitude = Geo_dat.shape
     OCN_BND = copy.copy(Geo_dat)
     for i in range(1,latitude-1):
@@ -265,18 +351,14 @@ def Get_Ocean_Boundary_Distribution(Geo_dat):
             else:
                 jp1 = j + 1
             if (Geo_dat[i,j]  == 5) or (Geo_dat[i,j] == 2): 
-                if (Geo_dat[i+1,j] == 3) or  (Geo_dat[i+1,j] == 1):
+                if ((Geo_dat[i+1,j] == 3) or  (Geo_dat[i+1,j] == 1) or (Geo_dat[i-1,j] == 3) or 
+                    (Geo_dat[i-1,j] == 1) or  (Geo_dat[i,jp1] == 3) or (Geo_dat[i,jp1] == 1) or 
+                    (Geo_dat[i,j-1] == 3) or  (Geo_dat[i,j-1] == 1)):
                     OCN_BND[i,j] = 0
-                if (Geo_dat[i-1,j] == 3) or  (Geo_dat[i-1,j] == 1):
-                     OCN_BND[i,j] = 0
-                if (Geo_dat[i,jp1] == 3) or  (Geo_dat[i,jp1] == 1):
-                     OCN_BND[i,j] = 0     
-                if (Geo_dat[i,j-1] == 3) or  (Geo_dat[i,j-1] == 1):
-                     OCN_BND[i,j] = 0   
                      
     return OCN_BND
 
-def Get_Surface_Boundary_Distribution(Geo_dat):
+def Get_Surface_Boundary_Distribution(Geo_dat): # Calculate points on the world map where land is connected to ocean --> needed for surface diffusion
     latitude, longitude = Geo_dat.shape
     Surface_BND = copy.copy(Geo_dat)
     for i in range(1,latitude-1):
@@ -286,21 +368,15 @@ def Get_Surface_Boundary_Distribution(Geo_dat):
             else:
                 jp1 = j + 1
             if (Geo_dat[i,j]  == 1) or (Geo_dat[i,j] == 3): 
-                if (Geo_dat[i+1,j] == 5) or  (Geo_dat[i+1,j] == 2):
+                if ((Geo_dat[i+1,j] == 5) or  (Geo_dat[i+1,j] == 2) or (Geo_dat[i-1,j] == 5) or
+                    (Geo_dat[i-1,j] == 2) or (Geo_dat[i,jp1] == 5) or  (Geo_dat[i,jp1] == 2) or
+                    (Geo_dat[i,j-1] == 5) or  (Geo_dat[i,j-1] == 2)):
                     Surface_BND[i,j] = 0
-                if (Geo_dat[i-1,j] == 5) or  (Geo_dat[i-1,j] == 2):
-                     Surface_BND[i,j] = 0
-                if (Geo_dat[i,jp1] == 5) or  (Geo_dat[i,jp1] == 2):
-                     Surface_BND[i,j] = 0     
-                if (Geo_dat[i,j-1] == 5) or  (Geo_dat[i,j-1] == 2):
-                     Surface_BND[i,j] = 0   
-                     
+                    
     return Surface_BND
 
-
-
-def calc_heat_capacity(T): #from lecture
-    n_latitude, n_longitude = T.shape  
+def calc_heat_capacity(Geo_dat): # From lecture
+    n_latitude, n_longitude = Geo_dat.shape  
     C = np.zeros((n_latitude,n_longitude))
     
     C_atm = 1.225*1000*3850
@@ -310,20 +386,21 @@ def calc_heat_capacity(T): #from lecture
     C_snow = 400*880*0.5
     sek_per_year = 3.15576*10**7
     
+    # Calculate heat capacity for every type of surface 
     for i in range(0,n_latitude):
         for j in range(0,n_longitude):
-            if T[i,j] == 1: 
+            if Geo_dat[i,j] == 1: 
                 C[i,j] = (C_soil + C_atm)/sek_per_year
-            if T[i,j] == 2: 
+            if Geo_dat[i,j] == 2: 
                 C[i,j] = (C_ice + C_atm)/sek_per_year
-            if T[i,j] == 3: 
+            if Geo_dat[i,j] == 3: 
                 C[i,j] = (C_snow + C_atm)/sek_per_year
-            if T[i,j] == 5: 
+            if Geo_dat[i,j] == 5: 
                 C[i,j] = (C_mixed + C_atm)/sek_per_year
                    
     return C
 
-def calc_diffusion_coefficients(geo_dat): #from lecture
+def calc_diffusion_coefficients(geo_dat): # From lecture
     nlatitude, nlongitude = geo_dat.shape
 
     coeff_ocean_poles = 0.40
@@ -331,7 +408,8 @@ def calc_diffusion_coefficients(geo_dat): #from lecture
     coeff_equator = 0.65
     coeff_north_pole = 0.28
     coeff_south_pole = 0.20
-
+    
+    # Calculate diffusion coefficient for different types of surface 
     def diffusion_coefficient(j, i):
         # Compute the j value of the equator
         j_equator = int(nlatitude / 2)
@@ -351,8 +429,7 @@ def calc_diffusion_coefficients(geo_dat): #from lecture
 
     return np.array([[diffusion_coefficient(j, i) for i in range(nlongitude)] for j in range(nlatitude)])
 
-def insolation(latitude, true_longitude, solar_constant, eccentricity,
-               obliquity, precession_distance):
+def insolation(latitude, true_longitude, solar_constant, eccentricity, obliquity, precession_distance): # Caclulate insolation for a latitude point 
     # Determine if there is no sunset or no sunrise.
     sin_delta = np.sin(obliquity) * np.sin(true_longitude)
     cos_delta = np.sqrt(1 - sin_delta ** 2)
@@ -378,8 +455,7 @@ def insolation(latitude, true_longitude, solar_constant, eccentricity,
             second_term = h0 * np.sin(latitude) * sin_delta + np.cos(latitude) * cos_delta * np.sin(h0)
             return solar_constant * rho / np.pi * second_term
    
-def calc_insolation(y_lat, true_longitudes, solar_constant=1371.685,    
-                       eccentricity= 0.016740, obliquity=0.409253,
+def calc_insolation(y_lat, true_longitudes, solar_constant=1371.685, eccentricity= 0.016740, obliquity=0.409253,
                        precession_distance=1.783037):
     nlatitude = y_lat.size
     
@@ -389,13 +465,13 @@ def calc_insolation(y_lat, true_longitudes, solar_constant=1371.685,
                      for j in range(nlatitude)])
 
 
-def calc_solar_forcing(insolation, coalbedo, mesh):
+def calc_solar_forcing(insolation, coalbedo, mesh): 
     solar_forcing = np.zeros((mesh.n_latitude, mesh.n_longitude))
     for i in range(mesh.n_longitude):
         solar_forcing[:,i]  = insolation * coalbedo[:,i]
     return solar_forcing    
 
-def plot_solar_forcing(solar_forcing, timestep, show_plot=False):
+def plot_solar_forcing(solar_forcing, timestep, show_plot=False): # From lecture
     vmin = np.amin(solar_forcing)
     vmax = np.amax(solar_forcing) * 1.05
     levels = np.linspace(vmin, vmax, 200)
@@ -403,9 +479,7 @@ def plot_solar_forcing(solar_forcing, timestep, show_plot=False):
     # Reuse plotting function from milestone 1.
     ntimesteps = solar_forcing.shape[2]
     day = (np.int_(timestep / ntimesteps * 365) + 80) % 365
-    cbar = plot_robinson_projection(solar_forcing[:, :, timestep],
-                                    f"Solar Forcing for Day {day}",
-                                    levels=levels, cmap="gist_heat",
+    cbar = plot_robinson_projection(solar_forcing[:, :, timestep],f"Solar Forcing for Day {day}",  levels=levels, cmap="gist_heat",
                                     vmin=vmin, vmax=vmax)
     cbar.set_label("solar forcing")
 
@@ -421,7 +495,7 @@ def plot_solar_forcing(solar_forcing, timestep, show_plot=False):
     return filename
 
 
-def calc_diffusion_operator_ocn(mesh, diffusion_coeff, temperature, Ocean_boundary, k, l):
+def calc_diffusion_operator_ocn(mesh, diffusion_coeff, temperature, Ocean_boundary): 
     h = mesh.h
     area = mesh.area
     n_latitude = mesh.n_latitude
@@ -429,205 +503,105 @@ def calc_diffusion_operator_ocn(mesh, diffusion_coeff, temperature, Ocean_bounda
     csc2 = mesh.csc2
     cot = mesh.cot
 
-    return calc_diffusion_operator_inner_ocn(h, area, n_latitude, n_longitude, csc2, cot, diffusion_coeff, temperature, Ocean_boundary, k, l )
+    return calc_diffusion_operator_inner_ocn(h, area, n_latitude, n_longitude, csc2, cot, diffusion_coeff, temperature, Ocean_boundary )
 
 @njit    
-def calc_diffusion_operator_inner_ocn(h, area, n_latitude, n_longitude, csc2, cot, diffusion_coeff, temperature, Ocean_boundary, k, l):
+def calc_diffusion_operator_inner_ocn(h, area, n_latitude, n_longitude, csc2, cot, diffusion_coeff, temperature, Ocean_boundary):
     result = np.zeros(diffusion_coeff.shape)
-
-    # North Pole
+    temp = temperature
+    # North Pole --> Boundary Condition
     factor = np.sin(h / 2) / (4 * np.pi * area[0])
     result[0, :] = factor * 0.5 * np.dot(diffusion_coeff[0, :] + diffusion_coeff[1, :], temperature[1, :] - temperature[0, :])
 
     # South Pole
-    # factor = np.sin(h / 2) / (4 * np.pi * area[-1])
-    # result[-1, :] = factor * 0.5 * np.dot(diffusion_coeff[-1, :] + diffusion_coeff[-2, :],temperature[-2, :] - temperature[-1, :])
-    #result[-1, :] = np.zeros(128) #da am Südpol nur Land ist --> keine Ozean Diffusion
-    result[-1, :] = np.ones(128) * np.nan
+    result[-1, :] = np.zeros(n_longitude) #* np.nan  #No ocean at the south pole --> no diffusion
     for i in range(n_longitude):
         # Only loop over inner nodes
         for j in range(1, n_latitude - 1):
-            # There are the special cases of i=0 and i=n_longitude-1.
-            # We have a periodic boundary condition, so for i=0, we want i-1 to be the last entry.
-            # This happens automatically in Python when i=-1.
-            # For i=n_longitude-1, we want i+1 to be 0.
-            # For this, we define a variable ip1 (i plus 1) to avoid duplicating code.
             if i == n_longitude - 1:
                 ip1 = 0
             else:
                 ip1 = i + 1
             
-            if Ocean_boundary[j,i] == 0 :  #and i == k and j == l
-                if (Ocean_boundary[j,ip1] == 1 or  Ocean_boundary[j,ip1] == 3) and (Ocean_boundary[j,i-1] == 1 or Ocean_boundary[j,i-1] == 3) and (Ocean_boundary[j+1,i] == 1 or Ocean_boundary[j+1,i] == 3) and (Ocean_boundary[j-1,i] == 1 or Ocean_boundary[j-1,i] == 3):
-                    factor1 = csc2[j - 1] / (h ** 2)
-                    term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, i])
-                    
-                    factor2 = 1 / (h ** 2)
-                    term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j , i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j, i])
-
-                    term3 = 0
-
-                    
-                if (Ocean_boundary[j,ip1] == 5 or Ocean_boundary[j,ip1] == 0 or Ocean_boundary[j,ip1] == 2) and (Ocean_boundary[j,i-1] == 1 or Ocean_boundary[j,i-1] == 3) and (Ocean_boundary[j+1,i] == 1 or Ocean_boundary[j+1,i] == 3) and (Ocean_boundary[j-1,i] == 1 or Ocean_boundary[j-1,i] == 3): 
-                   factor1 = csc2[j - 1] / (h ** 2)
-                   term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j,i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, ip1])
-
-                   factor2 = 1 / (h ** 2)
-                   term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j, i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j , i])
-
-                   term3 = 0
-                   
-                if (Ocean_boundary[j,ip1] == 1 or Ocean_boundary[j,ip1] == 3) and (Ocean_boundary[j,i-1] == 5 or Ocean_boundary[j,i-1] == 0 or Ocean_boundary[j,i-1] == 2) and (Ocean_boundary[j+1,i] == 1 or Ocean_boundary[j+1,i] == 3) and (Ocean_boundary[j-1,i] == 1 or Ocean_boundary[j-1,i] == 3):    
-                    factor1 = csc2[j - 1] / (h ** 2)
-                    term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i - 1] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, i])
-
-                    factor2 = 1 / (h ** 2)
-                    term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j , i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j, i])
-
-                    term3 = 0
-                
-                if (Ocean_boundary[j,ip1] == 1 or Ocean_boundary[j,ip1] == 3) and (Ocean_boundary[j,i-1] == 1 or Ocean_boundary[j,i-1] == 3) and (Ocean_boundary[j+1,i] == 5 or Ocean_boundary[j+1,i] == 0 or Ocean_boundary[j+1,i] == 2) and (Ocean_boundary[j-1,i] == 1 or Ocean_boundary[j-1,i] == 3):
-                    factor1 = csc2[j - 1] / (h ** 2)
-                    term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i ] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, i])
-
-                    factor2 = 1 / (h ** 2)
-                    term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j , i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j + 1, i])
-
-                    term3 = cot[j - 1] * diffusion_coeff[j, i] * 0.5 / h * (temperature[j + 1, i] - temperature[j , i])
-                    
-                if (Ocean_boundary[j,ip1] == 1 or Ocean_boundary[j,ip1] == 3) and (Ocean_boundary[j,i-1] == 1 or Ocean_boundary[j,i-1] == 3) and (Ocean_boundary[j+1,i] == 1 or Ocean_boundary[j+1,i] == 3) and (Ocean_boundary[j-1,i] == 5 or Ocean_boundary[j-1,i] == 0 or Ocean_boundary[j-1,i] == 2):
-                     factor1 = csc2[j - 1] / (h ** 2)
-                     term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i ] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, i])
-
-                     factor2 = 1 / (h ** 2)
-                     term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j - 1, i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j, i])
-
-                     term3 = cot[j - 1] * diffusion_coeff[j, i] * 0.5 / h * (temperature[j , i] - temperature[j - 1, i])
+           
+            if Ocean_boundary[j,i] == 0 :  # At the boundary to land we do not want diffusion to happen in that direction --> we have to adjust equation is that direction
+               ################################### CODE ##################################################################    
                      
-                if (Ocean_boundary[j,ip1] == 5 or Ocean_boundary[j,ip1] == 0 or Ocean_boundary[j,ip1] == 2) and (Ocean_boundary[j,i-1] == 5 or Ocean_boundary[j,i-1] == 0 or Ocean_boundary[j,i-1] == 2) and (Ocean_boundary[j+1,i] == 1 or Ocean_boundary[j+1,i] == 3) and (Ocean_boundary[j-1,i] == 1 or Ocean_boundary[j-1,i] == 3):
-                    
-                   factor1 = csc2[j - 1] / (h ** 2)
-                   term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i - 1] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, ip1])
+                if Ocean_boundary[j,ip1] == 1 or  Ocean_boundary[j,ip1] == 3:
+                    t1 = temp[j,ip1]
+                    temp[j,ip1] = temp[j,i] 
+                if Ocean_boundary[j,i-1] == 1 or  Ocean_boundary[j,i-1] == 3:    
+                    t2 = temp[j,i-1]
+                    temp[j,i-1] = temp[j,i] 
+                if Ocean_boundary[j+1,i] == 1 or  Ocean_boundary[j+1,i] == 3: 
+                    t3 =  temp[j+1,i] 
+                    temp[j+1,i] = temp[j,i]
+                if Ocean_boundary[j-1,i] == 1 or  Ocean_boundary[j-1,i] == 3:  
+                    t4 = temp[j-1,i]
+                    temp[j-1,i] = temp[j,i]
 
-                   factor2 = 1 / (h ** 2)
-                   term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j, i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j, i])
-
-                   term3 = 0
-
-                if (Ocean_boundary[j,ip1] == 5 or Ocean_boundary[j,ip1] == 0 or Ocean_boundary[j,ip1] == 2) and (Ocean_boundary[j,i-1] == 1 or Ocean_boundary[j,i-1] == 3) and (Ocean_boundary[j+1,i] == 5 or Ocean_boundary[j+1,i] == 0 or Ocean_boundary[j+1,i] == 2)  and (Ocean_boundary[j-1,i] == 1 or Ocean_boundary[j-1,i] == 3):
-                    factor1 = csc2[j - 1] / (h ** 2)
-                    term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i ] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, ip1])
-
-                    factor2 = 1 / (h ** 2)
-                    term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j, i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j + 1, i])
-
-                    term3 = cot[j - 1] * diffusion_coeff[j, i] * 0.5 / h * (temperature[j + 1, i] - temperature[j , i])
-
-                    
-                if (Ocean_boundary[j,ip1] == 5 or Ocean_boundary[j,ip1] == 0 or Ocean_boundary[j,ip1] == 2) and (Ocean_boundary[j,i-1] == 1 or Ocean_boundary[j,i-1] == 3) and (Ocean_boundary[j+1,i] == 1 or Ocean_boundary[j+1,i] == 3) and (Ocean_boundary[j-1,i] == 5 or Ocean_boundary[j-1,i] == 0 or Ocean_boundary[j-1,i] == 2):
-                   factor1 = csc2[j - 1] / (h ** 2)
-                   term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i ] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, ip1])
-
-                   factor2 = 1 / (h ** 2)
-                   term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j - 1, i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j, i])
-
-                   term3 = cot[j - 1] * diffusion_coeff[j, i] * 0.5 / h * (temperature[j , i] - temperature[j - 1, i])
-
-                if (Ocean_boundary[j,ip1] == 1 or Ocean_boundary[j,ip1] == 3) and (Ocean_boundary[j,i-1] == 5 or Ocean_boundary[j,i-1] == 0 or Ocean_boundary[j,i-1] == 2) and (Ocean_boundary[j+1,i] == 5 or Ocean_boundary[j+1,i] == 0 or Ocean_boundary[j+1,i] == 2) and (Ocean_boundary[j-1,i] == 1 or Ocean_boundary[j-1,i] == 3):
-                   factor1 = csc2[j - 1] / (h ** 2)
-                   term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i - 1] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, i])
-
-                   factor2 = 1 / (h ** 2)
-                   term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j , i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j + 1, i])
-
-                   term3 = cot[j - 1] * diffusion_coeff[j, i] * 0.5 / h * (temperature[j + 1, i] - temperature[j, i])
-
-                if (Ocean_boundary[j,ip1] == 1 or Ocean_boundary[j,ip1] == 3) and (Ocean_boundary[j,i-1] == 5 or Ocean_boundary[j,i-1] == 0 or Ocean_boundary[j,i-1] == 2) and (Ocean_boundary[j+1,i] == 1 or Ocean_boundary[j+1,i] == 3) and (Ocean_boundary[j-1,i] == 5 or Ocean_boundary[j-1,i] == 0 or Ocean_boundary[j-1,i] == 2):
-                   factor1 = csc2[j - 1] / (h ** 2)
-                   term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i - 1] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, i])
-
-                   factor2 = 1 / (h ** 2)
-                   term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j - 1, i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j , i])
-
-                   term3 = cot[j - 1] * diffusion_coeff[j, i] * 0.5 / h * (temperature[j, i] - temperature[j - 1, i])
-
-     
-                if (Ocean_boundary[j,ip1] == 1 or Ocean_boundary[j,ip1] == 3) and (Ocean_boundary[j,i-1] == 1 or Ocean_boundary[j,i-1] == 3) and (Ocean_boundary[j+1,i] == 5 or Ocean_boundary[j+1,i] == 0 or Ocean_boundary[j+1,i] == 2) and (Ocean_boundary[j-1,i] == 5 or Ocean_boundary[j-1,i] == 0 or Ocean_boundary[j-1,i] == 2):
-                    factor1 = csc2[j - 1] / (h ** 2)
-                    term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i ] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, i])
-
-                    factor2 = 1 / (h ** 2)
-                    term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j - 1, i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j + 1, i])
-
-                    term3 = cot[j - 1] * diffusion_coeff[j, i] * 0.5 / h * (temperature[j + 1, i] - temperature[j - 1, i])
-
-                if (Ocean_boundary[j,ip1] == 5 or Ocean_boundary[j,ip1] == 0 or Ocean_boundary[j,ip1] == 2) and (Ocean_boundary[j,i-1] == 5 or Ocean_boundary[j,i-1] == 0 or Ocean_boundary[j,i-1] == 2) and (Ocean_boundary[j+1,i] == 5 or Ocean_boundary[j+1,i] == 0 or Ocean_boundary[j+1,i] == 2) and (Ocean_boundary[j-1,i] == 1 or Ocean_boundary[j-1,i] == 3):
-                    factor1 = csc2[j - 1] / (h ** 2)
-                    term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i - 1] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, ip1])
-
-                    factor2 = 1 / (h ** 2)
-                    term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j, i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j + 1, i])
-
-                    term3 = cot[j - 1] * diffusion_coeff[j, i] * 0.5 / h * (temperature[j + 1, i] - temperature[j , i])
-
-                                 
-                if (Ocean_boundary[j,ip1] == 1 or Ocean_boundary[j,ip1] == 3) and (Ocean_boundary[j,i-1] == 5  or Ocean_boundary[j,i-1] == 0 or Ocean_boundary[j,i-1] == 2) and (Ocean_boundary[j+1,i] == 5 or Ocean_boundary[j+1,i] == 0 or Ocean_boundary[j+1,i] == 2) and (Ocean_boundary[j-1,i] == 5 or Ocean_boundary[j-1,i] == 0 or Ocean_boundary[j-1,i] == 2):
-                    factor1 = csc2[j - 1] / (h ** 2)
-                    term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i - 1] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, i])
-
-                    factor2 = 1 / (h ** 2)
-                    term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j - 1, i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j + 1, i])
-
-                    term3 = cot[j - 1] * diffusion_coeff[j, i] * 0.5 / h * (temperature[j + 1, i] - temperature[j - 1, i])
-
-                if (Ocean_boundary[j,ip1] == 5 or Ocean_boundary[j,ip1] == 0 or Ocean_boundary[j,ip1] == 2) and (Ocean_boundary[j,i-1] == 1 or Ocean_boundary[j,i-1] == 3) and (Ocean_boundary[j+1,i] == 5 or Ocean_boundary[j+1,i] == 0 or Ocean_boundary[j+1,i] == 2)  and (Ocean_boundary[j-1,i] == 5 or Ocean_boundary[j-1,i] == 0 or Ocean_boundary[j-1,i] == 2):
-                    factor1 = csc2[j - 1] / (h ** 2)
-                    term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i ] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, ip1])
-
-                    factor2 = 1 / (h ** 2)
-                    term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j - 1, i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j + 1, i])
-
-                    term3 = cot[j - 1] * diffusion_coeff[j, i] * 0.5 / h * (temperature[j + 1, i] - temperature[j - 1, i])
-
-                if (Ocean_boundary[j,ip1] == 5 or Ocean_boundary[j,ip1] == 0 or Ocean_boundary[j,ip1] == 2) and (Ocean_boundary[j,i-1] == 5 or Ocean_boundary[j,i-1] == 0 or Ocean_boundary[j,i-1] == 2) and (Ocean_boundary[j+1,i] == 1 or Ocean_boundary[j+1,i] == 3) and (Ocean_boundary[j-1,i] == 5 or Ocean_boundary[j-1,i] == 0 or Ocean_boundary[j-1,i] == 2):
-                    factor1 = csc2[j - 1] / (h ** 2)
-                    term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i - 1] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, ip1])
-
-                    factor2 = 1 / (h ** 2)
-                    term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j - 1, i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j, i])
-
-                    term3 = cot[j - 1] * diffusion_coeff[j, i] * 0.5 / h * (temperature[j , i] - temperature[j - 1, i])
-
-                    
-                if (Ocean_boundary[j,ip1] == 5 or Ocean_boundary[j,ip1] == 0 or Ocean_boundary[j,ip1] == 2) and (Ocean_boundary[j,i-1] == 5 or Ocean_boundary[j,i-1] == 0  or Ocean_boundary[j,i-1] == 2) and (Ocean_boundary[j+1,i] == 5 or Ocean_boundary[j+1,i] == 0 or Ocean_boundary[j+1,i] == 2) and (Ocean_boundary[j-1,i] == 5 or Ocean_boundary[j-1,i] == 0 or Ocean_boundary[j-1,i] == 2): 
-                    factor1 = csc2[j - 1] / (h ** 2)
-                    term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i - 1] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, ip1])
-
-                    factor2 = 1 / (h ** 2)
-                    term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j - 1, i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j + 1, i])
-
-                    term3 = cot[j - 1] * diffusion_coeff[j, i] * 0.5 / h * (temperature[j + 1, i] - temperature[j - 1, i])
-
-            elif (Ocean_boundary[j,i] == 1 or Ocean_boundary[j,i] == 3):   
-                term1 = np.nan
-                term2 = np.nan
-                term3 = np.nan
-            else:    
                 # Note that csc2 does not contain the values at the poles
-                factor1 = csc2[j - 1] /(h ** 2)
-                term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i - 1] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1]))  * temperature[j, ip1])
+                factor1 = csc2[j - 1] / h ** 2
+                term1 = factor1 * (-2 * diffusion_coeff[j, i] * temp[j, i] +
+                                      (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *
+                                      temp[j, i - 1] +
+                                      (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *
+                                      temp[j, ip1])
     
-                factor2 = 1 / (h ** 2)
-                term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j - 1, i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i]))  * temperature[j + 1, i])
+                factor2 = 1 / h ** 2
+                term2 = factor2 * (-2 * diffusion_coeff[j, i] * temp[j, i] +
+                                      (diffusion_coeff[j, i] - 0.25 *
+                                       (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) *
+                                      temp[j - 1, i]
+                                      + (diffusion_coeff[j, i] + 0.25 *
+                                         (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) *
+                                      temp[j + 1, i])
     
+                term3 = cot[j - 1] * diffusion_coeff[j, i] * 0.5 / h * (temp[j + 1, i] - temp[j - 1, i])
+                
+                
+                if Ocean_boundary[j,ip1] == 1 or  Ocean_boundary[j,ip1] == 3:
+                    temp[j,ip1] = t1
+                if Ocean_boundary[j,i-1] == 1 or  Ocean_boundary[j,i-1] == 3:    
+                    temp[j,i-1] = t2
+                if Ocean_boundary[j+1,i] == 1 or  Ocean_boundary[j+1,i] == 3: 
+                    temp[j+1,i] = t3
+                if Ocean_boundary[j-1,i] == 1 or  Ocean_boundary[j-1,i] == 3:  
+                    temp[j-1,i] = t4
+                
+                
+            elif  Ocean_boundary[j,i] == 1 or  Ocean_boundary[j,i] == 3:
+                term1 = 0
+                term2 = 0
+                term3 = 0
+                
+            else: 
+                # Note that csc2 does not contain the values at the poles
+                factor1 = csc2[j - 1] / h ** 2
+                term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] +
+                                   (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *
+                                   temperature[j, i - 1] +
+                                   (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *
+                                   temperature[j, ip1])
+
+                factor2 = 1 / h ** 2
+                term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] +
+                                   (diffusion_coeff[j, i] - 0.25 *
+                                    (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) *
+                                   temperature[j - 1, i]
+                                   + (diffusion_coeff[j, i] + 0.25 *
+                                      (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) *
+                                   temperature[j + 1, i])
+
                 term3 = cot[j - 1] * diffusion_coeff[j, i] * 0.5 / h * (temperature[j + 1, i] - temperature[j - 1, i])
 
-            result[j, i] = term1 + term2 + term3
-            
 
+            result[j, i] = term1 + term2 + term3    
+            
     return result
 
-def calc_diffusion_operator_atm(mesh, diffusion_coeff, temperature):
+
+def calc_diffusion_operator_atm(mesh, diffusion_coeff, temperature): # From lecture
     h = mesh.h
     area = mesh.area
     n_latitude = mesh.n_latitude
@@ -683,6 +657,65 @@ def calc_diffusion_operator_inner_atm(h, area, n_latitude, n_longitude, csc2, co
 
     return result
 
+# def calc_diffusion_operator_land(mesh, diffusion_coeff, temperature, Surface_Boundary): # Diffusion without boundary to the ocean
+#     h = mesh.h
+#     area = mesh.area
+#     n_latitude = mesh.n_latitude
+#     n_longitude = mesh.n_longitude
+#     csc2 = mesh.csc2
+#     cot = mesh.cot
+
+#     return calc_diffusion_operator_inner_land(h, area, n_latitude, n_longitude, csc2, cot, diffusion_coeff, temperature)
+
+# @njit
+# def calc_diffusion_operator_inner_land(h, area, n_latitude, n_longitude, csc2, cot, diffusion_coeff, temperature):
+#     result = np.zeros(diffusion_coeff.shape)
+
+#     # North Pole
+#     factor = np.sin(h / 2) / (4 * np.pi * area[0])
+#     result[0, :] = factor * 0.5 * np.dot(diffusion_coeff[0, :] + diffusion_coeff[1, :],
+#                                           temperature[1, :] - temperature[0, :])
+
+#     # South Pole
+#     factor = np.sin(h / 2) / (4 * np.pi * area[-1])
+#     result[-1, :] = factor * 0.5 * np.dot(diffusion_coeff[-1, :] + diffusion_coeff[-2, :],
+#                                           temperature[-2, :] - temperature[-1, :])
+
+#     for i in range(n_longitude):
+#         # Only loop over inner nodes
+#         for j in range(1, n_latitude - 1):
+#             # There are the special cases of i=0 and i=n_longitude-1.
+#             # We have a periodic boundary condition, so for i=0, we want i-1 to be the last entry.
+#             # This happens automatically in Python when i=-1.
+#             # For i=n_longitude-1, we want i+1 to be 0.
+#             # For this, we define a variable ip1 (i plus 1) to avoid duplicating code.
+#             if i == n_longitude - 1:
+#                 ip1 = 0
+#             else:
+#                 ip1 = i + 1
+
+#             # Note that csc2 does not contain the values at the poles
+#             factor1 = csc2[j - 1] / h ** 2
+#             term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] +
+#                                 (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *
+#                                 temperature[j, i - 1] +
+#                                 (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *
+#                                 temperature[j, ip1])
+
+#             factor2 = 1 / h ** 2
+#             term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] +
+#                                 (diffusion_coeff[j, i] - 0.25 *
+#                                 (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) *
+#                                 temperature[j - 1, i]
+#                                 + (diffusion_coeff[j, i] + 0.25 *
+#                                   (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) *
+#                                 temperature[j + 1, i])
+
+#             term3 = cot[j - 1] * diffusion_coeff[j, i] * 0.5 / h * (temperature[j + 1, i] - temperature[j - 1, i])
+
+#             result[j, i] = term1 + term2 + term3
+
+#     return result
 
 def calc_diffusion_operator_land(mesh, diffusion_coeff, temperature, Surface_boundary):
     h = mesh.h
@@ -697,198 +730,105 @@ def calc_diffusion_operator_land(mesh, diffusion_coeff, temperature, Surface_bou
 @njit    
 def calc_diffusion_operator_inner_land(h, area, n_latitude, n_longitude, csc2, cot, diffusion_coeff, temperature, Surface_boundary):
     result = np.zeros(diffusion_coeff.shape)
-
+    temp =  temperature
     # North Pole
-    factor = np.sin(h / 2) / (4 * np.pi * area[0])
-    #result[0, :] = factor * 0.5 * np.dot(diffusion_coeff[0, :] + diffusion_coeff[1, :], temperature[1, :] - temperature[0, :])
-    result[0, :] = np.ones(128)  * np.nan
+    result[0, :] = np.zeros(n_longitude) #No Diffusion at North Pole, because it is only ocean
     # South Pole
     factor = np.sin(h / 2) / (4 * np.pi * area[-1])
-    result[-1, :] = factor * 0.5 * np.dot(diffusion_coeff[-1, :] + diffusion_coeff[-2, :],temperature[-2, :] - temperature[-1, :])
-    #result[-1, :] = np.zeros(128) #da am Südpol nur Land ist --> keine Ozean Diffusion
-    
+    result[-1, :] = factor * 0.5 * np.dot(diffusion_coeff[-1, :] + diffusion_coeff[-2, :], temperature[-2, :] - temperature[-1, :])
+   
+   
     for i in range(n_longitude):
         # Only loop over inner nodes
         for j in range(1, n_latitude - 1):
-            # There are the special cases of i=0 and i=n_longitude-1.
-            # We have a periodic boundary condition, so for i=0, we want i-1 to be the last entry.
-            # This happens automatically in Python when i=-1.
-            # For i=n_longitude-1, we want i+1 to be 0.
-            # For this, we define a variable ip1 (i plus 1) to avoid duplicating code.
+     
             if i == n_longitude - 1:
                 ip1 = 0
             else:
                 ip1 = i + 1
-            
-            if Surface_boundary[j,i] == 0 :  #and i == k and j == l
-                if (Surface_boundary[j,ip1] == 5 or  Surface_boundary[j,ip1] == 2 ) and (Surface_boundary[j,i-1] == 5 or Surface_boundary[j,i-1] == 2) and (Surface_boundary[j+1,i] == 5 or Surface_boundary[j+1,i] == 2) and (Surface_boundary[j-1,i] == 5 or Surface_boundary[j-1,i] == 2):
-                    factor1 = csc2[j - 1] / (h ** 2)
-                    term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, i])
-                    
-                    factor2 = 1 / (h ** 2)
-                    term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j , i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j, i])
-
-                    term3 = 0
-
-                    
-                if (Surface_boundary[j,ip1] == 1 or Surface_boundary[j,ip1] == 0 or Surface_boundary[j,ip1] == 3) and (Surface_boundary[j,i-1] == 5 or Surface_boundary[j,i-1] == 2) and (Surface_boundary[j+1,i] == 5 or Surface_boundary[j+1,i] == 2) and (Surface_boundary[j-1,i] == 5 or Surface_boundary[j-1,i] == 2): 
-                   factor1 = csc2[j - 1] / (h ** 2)
-                   term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j,i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, ip1])
-
-                   factor2 = 1 / (h ** 2)
-                   term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j, i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j , i])
-
-                   term3 = 0
-                   
-                if (Surface_boundary[j,ip1] == 5 or Surface_boundary[j,ip1] == 2) and (Surface_boundary[j,i-1] == 1 or Surface_boundary[j,i-1] == 0 or Surface_boundary[j,i-1] == 3) and (Surface_boundary[j+1,i] == 5 or Surface_boundary[j+1,i] == 2) and (Surface_boundary[j-1,i] == 5 or Surface_boundary[j-1,i] == 2):    
-                    factor1 = csc2[j - 1] / (h ** 2)
-                    term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i - 1] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, i])
-
-                    factor2 = 1 / (h ** 2)
-                    term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j , i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j, i])
-
-                    term3 = 0
                 
-                if (Surface_boundary[j,ip1] == 5 or Surface_boundary[j,ip1] == 2) and (Surface_boundary[j,i-1] == 5 or Surface_boundary[j,i-1] == 2) and (Surface_boundary[j+1,i] == 1 or Surface_boundary[j+1,i] == 0 or Surface_boundary[j+1,i] == 3) and (Surface_boundary[j-1,i] == 5 or Surface_boundary[j-1,i] == 2):
-                    factor1 = csc2[j - 1] / (h ** 2)
-                    term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i ] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, i])
-
-                    factor2 = 1 / (h ** 2)
-                    term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j , i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j + 1, i])
-
-                    term3 = cot[j - 1] * diffusion_coeff[j, i] * 0.5 / h * (temperature[j + 1, i] - temperature[j , i])
+            ###################################    
+            
+            if Surface_boundary[j,i] == 0 : # Check if Land-Surface borders the ocean --> then we do not have diffusion in the direction of the ocean
+               
+                if Surface_boundary[j,ip1] == 5 or  Surface_boundary[j,ip1] == 2: # if tji+1 is part of the ocean then we set tji = tji+1 because there is no diffusion 
+                    t1 = temp[j,ip1]
+                    temp[j,ip1] = temperature[j,i] 
+                if Surface_boundary[j,i-1] == 5 or  Surface_boundary[j,i-1] == 2:    
+                    t2 =   temp[j,i-1]
+                    temp[j,i-1] = temperature[j,i] 
+                if Surface_boundary[j+1,i] == 5 or  Surface_boundary[j+1,i] == 2: 
+                    t3 = temp[j+1,i] 
+                    temp[j+1,i] = temperature[j,i]
+                if Surface_boundary[j-1,i] == 5 or  Surface_boundary[j-1,i] == 2:  
+                    t4 = temp[j-1,i] 
+                    temp[j-1,i] = temperature[j,i]
                     
-                if (Surface_boundary[j,ip1] == 5 or Surface_boundary[j,ip1] == 2) and (Surface_boundary[j,i-1] == 5 or Surface_boundary[j,i-1] == 2) and (Surface_boundary[j+1,i] == 5 or Surface_boundary[j+1,i] == 2) and (Surface_boundary[j-1,i] == 1 or Surface_boundary[j-1,i] == 0 or Surface_boundary[j-1,i] == 3):
-                     factor1 = csc2[j - 1] / (h ** 2)
-                     term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i ] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, i])
 
-                     factor2 = 1 / (h ** 2)
-                     term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j - 1, i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j, i])
-
-                     term3 = cot[j - 1] * diffusion_coeff[j, i] * 0.5 / h * (temperature[j , i] - temperature[j - 1, i])
-                     
-                if (Surface_boundary[j,ip1] == 1 or Surface_boundary[j,ip1] == 0 or Surface_boundary[j,ip1] == 3) and (Surface_boundary[j,i-1] == 1 or Surface_boundary[j,i-1] == 0 or Surface_boundary[j,i-1] == 3) and (Surface_boundary[j+1,i] == 5 or Surface_boundary[j+1,i] == 2) and (Surface_boundary[j-1,i] == 5 or Surface_boundary[j-1,i] == 2):
-                    
-                   factor1 = csc2[j - 1] / (h ** 2)
-                   term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i - 1] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, ip1])
-
-                   factor2 = 1 / (h ** 2)
-                   term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j, i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j, i])
-
-                   term3 = 0
-
-                if (Surface_boundary[j,ip1] == 1 or Surface_boundary[j,ip1] == 0 or Surface_boundary[j,ip1] == 3) and (Surface_boundary[j,i-1] == 5 or Surface_boundary[j,i-1] == 2) and (Surface_boundary[j+1,i] == 1 or Surface_boundary[j+1,i] == 0 or Surface_boundary[j+1,i] == 3)  and (Surface_boundary[j-1,i] == 5 or Surface_boundary[j-1,i] == 2):
-                    factor1 = csc2[j - 1] / (h ** 2)
-                    term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i ] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, ip1])
-
-                    factor2 = 1 / (h ** 2)
-                    term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j, i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j + 1, i])
-
-                    term3 = cot[j - 1] * diffusion_coeff[j, i] * 0.5 / h * (temperature[j + 1, i] - temperature[j , i])
-
-                    
-                if (Surface_boundary[j,ip1] == 1 or Surface_boundary[j,ip1] == 0 or Surface_boundary[j,ip1] == 3) and (Surface_boundary[j,i-1] == 5 or Surface_boundary[j,i-1] == 2) and (Surface_boundary[j+1,i] == 5 or Surface_boundary[j+1,i] == 2) and (Surface_boundary[j-1,i] == 1 or Surface_boundary[j-1,i] == 0 or Surface_boundary[j-1,i] == 3):
-                   factor1 = csc2[j - 1] / (h ** 2)
-                   term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i ] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, ip1])
-
-                   factor2 = 1 / (h ** 2)
-                   term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j - 1, i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j, i])
-
-                   term3 = cot[j - 1] * diffusion_coeff[j, i] * 0.5 / h * (temperature[j , i] - temperature[j - 1, i])
-
-                if (Surface_boundary[j,ip1] == 5 or Surface_boundary[j,ip1] == 2) and (Surface_boundary[j,i-1] == 1 or Surface_boundary[j,i-1] == 0 or Surface_boundary[j,i-1] == 3) and (Surface_boundary[j+1,i] == 1 or Surface_boundary[j+1,i] == 0 or Surface_boundary[j+1,i] == 3) and (Surface_boundary[j-1,i] == 5 or Surface_boundary[j-1,i] == 2):
-                   factor1 = csc2[j - 1] / (h ** 2)
-                   term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i - 1] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, i])
-
-                   factor2 = 1 / (h ** 2)
-                   term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j , i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j + 1, i])
-
-                   term3 = cot[j - 1] * diffusion_coeff[j, i] * 0.5 / h * (temperature[j + 1, i] - temperature[j, i])
-
-                if (Surface_boundary[j,ip1] == 5 or Surface_boundary[j,ip1] == 2) and (Surface_boundary[j,i-1] == 1 or Surface_boundary[j,i-1] == 0 or Surface_boundary[j,i-1] == 3) and (Surface_boundary[j+1,i] == 5 or Surface_boundary[j+1,i] == 2) and (Surface_boundary[j-1,i] == 1 or Surface_boundary[j-1,i] == 0 or Surface_boundary[j-1,i] == 3):
-                   factor1 = csc2[j - 1] / (h ** 2)
-                   term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i - 1] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, i])
-
-                   factor2 = 1 / (h ** 2)
-                   term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j - 1, i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j , i])
-
-                   term3 = cot[j - 1] * diffusion_coeff[j, i] * 0.5 / h * (temperature[j, i] - temperature[j - 1, i])
-
-     
-                if (Surface_boundary[j,ip1] == 5 or Surface_boundary[j,ip1] == 2) and (Surface_boundary[j,i-1] == 5 or Surface_boundary[j,i-1] == 2) and (Surface_boundary[j+1,i] == 1 or Surface_boundary[j+1,i] == 0 or Surface_boundary[j+1,i] == 3) and (Surface_boundary[j-1,i] == 1 or Surface_boundary[j-1,i] == 0 or Surface_boundary[j-1,i] == 3):
-                    factor1 = csc2[j - 1] / (h ** 2)
-                    term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i ] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, i])
-
-                    factor2 = 1 / (h ** 2)
-                    term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j - 1, i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j + 1, i])
-
-                    term3 = cot[j - 1] * diffusion_coeff[j, i] * 0.5 / h * (temperature[j + 1, i] - temperature[j - 1, i])
-
-                if (Surface_boundary[j,ip1] == 1 or Surface_boundary[j,ip1] == 0 or Surface_boundary[j,ip1] == 3) and (Surface_boundary[j,i-1] == 1 or Surface_boundary[j,i-1] == 0 or Surface_boundary[j,i-1] == 3) and (Surface_boundary[j+1,i] == 1 or Surface_boundary[j+1,i] == 0 or Surface_boundary[j+1,i] == 3) and (Surface_boundary[j-1,i] == 5 or Surface_boundary[j-1,i] == 2):
-                    factor1 = csc2[j - 1] / (h ** 2)
-                    term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i - 1] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, ip1])
-
-                    factor2 = 1 / (h ** 2)
-                    term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j, i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j + 1, i])
-
-                    term3 = cot[j - 1] * diffusion_coeff[j, i] * 0.5 / h * (temperature[j + 1, i] - temperature[j , i])
-
-                                 
-                if (Surface_boundary[j,ip1] == 5 or Surface_boundary[j,ip1] == 2) and (Surface_boundary[j,i-1] == 1  or Surface_boundary[j,i-1] == 0 or Surface_boundary[j,i-1] == 3) and (Surface_boundary[j+1,i] == 1 or Surface_boundary[j+1,i] == 0 or Surface_boundary[j+1,i] == 3) and (Surface_boundary[j-1,i] == 1 or Surface_boundary[j-1,i] == 0 or Surface_boundary[j-1,i] == 3):
-                    factor1 = csc2[j - 1] / (h ** 2)
-                    term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i - 1] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, i])
-
-                    factor2 = 1 / (h ** 2)
-                    term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j - 1, i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j + 1, i])
-
-                    term3 = cot[j - 1] * diffusion_coeff[j, i] * 0.5 / h * (temperature[j + 1, i] - temperature[j - 1, i])
-
-                if (Surface_boundary[j,ip1] == 1 or Surface_boundary[j,ip1] == 0 or Surface_boundary[j,ip1] == 3) and (Surface_boundary[j,i-1] == 5 or Surface_boundary[j,i-1] == 2) and (Surface_boundary[j+1,i] == 1 or Surface_boundary[j+1,i] == 0 or Surface_boundary[j+1,i] == 3)  and (Surface_boundary[j-1,i] == 1 or Surface_boundary[j-1,i] == 0 or Surface_boundary[j-1,i] == 3):
-                    factor1 = csc2[j - 1] / (h ** 2)
-                    term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i ] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, ip1])
-
-                    factor2 = 1 / (h ** 2)
-                    term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j - 1, i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j + 1, i])
-
-                    term3 = cot[j - 1] * diffusion_coeff[j, i] * 0.5 / h * (temperature[j + 1, i] - temperature[j - 1, i])
-
-                if (Surface_boundary[j,ip1] == 1 or Surface_boundary[j,ip1] == 0 or Surface_boundary[j,ip1] == 3) and (Surface_boundary[j,i-1] == 1 or Surface_boundary[j,i-1] == 0 or Surface_boundary[j,i-1] == 3) and (Surface_boundary[j+1,i] == 5 or Surface_boundary[j+1,i] == 2) and (Surface_boundary[j-1,i] == 1 or Surface_boundary[j-1,i] == 0 or Surface_boundary[j-1,i] == 3):
-                    factor1 = csc2[j - 1] / (h ** 2)
-                    term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i - 1] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, ip1])
-
-                    factor2 = 1 / (h ** 2)
-                    term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j - 1, i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j, i])
-
-                    term3 = cot[j - 1] * diffusion_coeff[j, i] * 0.5 / h * (temperature[j , i] - temperature[j - 1, i])
-
-                    
-                if (Surface_boundary[j,ip1] == 1 or Surface_boundary[j,ip1] == 0 or Surface_boundary[j,ip1] == 3) and (Surface_boundary[j,i-1] == 1 or Surface_boundary[j,i-1] == 0  or Surface_boundary[j,i-1] == 3) and (Surface_boundary[j+1,i] == 1 or Surface_boundary[j+1,i] == 0 or Surface_boundary[j+1,i] == 3) and (Surface_boundary[j-1,i] == 1 or Surface_boundary[j-1,i] == 0 or Surface_boundary[j-1,i] == 3): 
-                    factor1 = csc2[j - 1] / (h ** 2)
-                    term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i - 1] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *  temperature[j, ip1])
-
-                    factor2 = 1 / (h ** 2)
-                    term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j - 1, i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j + 1, i])
-
-                    term3 = cot[j - 1] * diffusion_coeff[j, i] * 0.5 / h * (temperature[j + 1, i] - temperature[j - 1, i])
-
-            elif (Surface_boundary[j,i] == 2 or Surface_boundary[j,i] == 5):   
-                term1 = np.nan
-                term2 = np.nan
-                term3 = np.nan
-            else:    
                 # Note that csc2 does not contain the values at the poles
-                factor1 = csc2[j - 1] /(h ** 2)
-                term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) * temperature[j, i - 1] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1]))  * temperature[j, ip1])
+                factor1 = csc2[j - 1] / h ** 2
+                term1 = factor1 * (-2 * diffusion_coeff[j, i] * temp[j, i] +
+                                    (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *
+                                    temp[j, i - 1] +
+                                    (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *
+                                    temp[j, ip1])
     
-                factor2 = 1 / (h ** 2)
-                term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] + (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) * temperature[j - 1, i] + (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i]))  * temperature[j + 1, i])
+                factor2 = 1 / h ** 2
+                term2 = factor2 * (-2 * diffusion_coeff[j, i] * temp[j, i] +
+                                    (diffusion_coeff[j, i] - 0.25 *
+                                    (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) *
+                                    temp[j - 1, i]
+                                    + (diffusion_coeff[j, i] + 0.25 *
+                                      (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) *
+                                    temp[j + 1, i])
     
+                term3 = cot[j - 1] * diffusion_coeff[j, i] * 0.5 / h * (temp[j + 1, i] - temp[j - 1, i])
+                
+                if Surface_boundary[j,ip1] == 5 or  Surface_boundary[j,ip1] == 2: #change temp afterwards back 
+                    temp[j,ip1] = t1 
+                if Surface_boundary[j,i-1] == 5 or  Surface_boundary[j,i-1] == 2:    
+                    temp[j,i-1] = t2
+                if Surface_boundary[j+1,i] == 5 or  Surface_boundary[j+1,i] == 2: 
+                    temp[j+1,i] = t3
+                if Surface_boundary[j-1,i] == 5 or  Surface_boundary[j-1,i] == 2:  
+                    temp[j-1,i] = t4
+                    
+            
+            elif Surface_boundary[j,i] == 2 or Surface_boundary[j,i] == 5 : # We do not have diffusion if the surface type is ocean or sea ice 
+                term1 = 0
+                term2 = 0
+                term3 = 0
+                
+            else: 
+               
+                factor1 = csc2[j - 1] / h ** 2
+                term1 = factor1 * (-2 * diffusion_coeff[j, i] * temperature[j, i] +
+                                    (diffusion_coeff[j, i] - 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *
+                                    temperature[j, i - 1] +
+                                    (diffusion_coeff[j, i] + 0.25 * (diffusion_coeff[j, ip1] - diffusion_coeff[j, i - 1])) *
+                                    temperature[j, ip1])
+
+                factor2 = 1 / h ** 2
+                term2 = factor2 * (-2 * diffusion_coeff[j, i] * temperature[j, i] +
+                                    (diffusion_coeff[j, i] - 0.25 *
+                                    (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) *
+                                    temperature[j - 1, i]
+                                    + (diffusion_coeff[j, i] + 0.25 *
+                                      (diffusion_coeff[j + 1, i] - diffusion_coeff[j - 1, i])) *
+                                    temperature[j + 1, i])
+
                 term3 = cot[j - 1] * diffusion_coeff[j, i] * 0.5 / h * (temperature[j + 1, i] - temperature[j - 1, i])
 
-            result[j, i] = term1 + term2 + term3
+        
+
+            result[j, i] = (term1 + term2 + term3  )
             
+              
 
     return result
+
+
+
 
 def plot_annual_temperature(annual_temperature, average_temperature, title):
     fig, ax = plt.subplots()
@@ -942,7 +882,7 @@ def plot_annual_ice_thickness(annual_ice_thickness, average_ice_thickness, title
     
 
 
-def calc_mean(data, area):
+def calc_mean(data, area): # From lecture
     nlatitude, nlongitude = data.shape
 
     mean_data = area[0] * data[0, 0] + area[-1] * data[-1, -1]
@@ -953,7 +893,7 @@ def calc_mean(data, area):
     return mean_data
 
 
-def calc_mean_ocn_south(data, area):
+def calc_mean_ocn_south(data, area): # Have to adjust for having only ocean cells to calculate mean
     nlatitude, nlongitude = data.shape
     mean_data = 0
     j_equator = int((nlatitude - 1) / 2)
@@ -980,7 +920,7 @@ def calc_mean_ocn_south(data, area):
     else: 
         return 0
 
-def calc_mean_ocn_north(data, area):
+def calc_mean_ocn_north(data, area): # Have to adjust for having only ocean cells to calculate mean
     nlatitude, nlongitude = data.shape
     mean_data = 0
     j_equator = int((nlatitude - 1) / 2)
@@ -1008,9 +948,11 @@ def calc_mean_ocn_north(data, area):
         return  mean_data *  1/area_normalized
     else: 
         return 0
+    
+
  
 
-def calc_mean_ocn(data, area):
+def calc_mean_ocn(data, area):  # Have to adjust for having only ocean cells to calculate mean
     nlatitude, nlongitude = data.shape
     mean_data = 0
     area_normalized = 0
@@ -1029,10 +971,13 @@ def calc_mean_ocn(data, area):
                 mean_data += area[j] * data[j,i]  
                 area_normalized += area[j] 
    
-    return mean_data * 1/area_normalized
+    if  area_normalized !=0:     
+        return  mean_data *  1/area_normalized
+    else: 
+        return 0
 
 
-def calc_mean_north(data, area):
+def calc_mean_north(data, area): 
     nlatitude, nlongitude = data.shape
     j_equator = int((nlatitude - 1) / 2)
 
@@ -1084,7 +1029,7 @@ def calc_area(nlatitude, nlongitude):
     return area
 
 
-def calc_lambda(dt = 1.0 / 48,  nt=48, ecc=  0.016740, per = 1.783037):  #calculation of true longitude
+def calc_lambda(dt = 1.0 / 48,  nt=48, ecc=  0.016740, per = 1.783037):  #calculation of true longitude from paper
     eccfac = 1.0 - ecc**2
     rzero  = (2.0*np.pi)/eccfac**1.5
   
@@ -1263,3 +1208,68 @@ def plot_annual_temperature_north_south(annual_temperature_north, annual_tempera
 
     plt.tight_layout()
     plt.show()
+    
+# Similar to plot_robinson_projection in MS1, but we also add contour lines
+def plot_robinson_projection_with_lines(data, geo_dat, title, **kwargs):
+    # Get the coordinates for the Robinson projection.
+    nlatitude, nlongitude = data.shape
+    x, y = robinson_projection(nlatitude, nlongitude)
+
+    # Start plotting.
+    fig, ax = plt.subplots()
+
+    # Create contour plot of geography information against x and y.
+    im = ax.contourf(x, y, data, **kwargs)
+
+    # Add contour lines with levels from MS1
+    levels = [0.5, 1.5, 2.5, 3.5, 6.5]
+    ax.contour(x, y, geo_dat, colors="black", linewidths=0.6, levels=levels, linestyles="solid")
+
+    plt.title(title)
+    ax.set_aspect("equal")
+
+    # Remove axes and ticks.
+    plt.xticks([])
+    plt.yticks([])
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["bottom"].set_visible(False)
+    ax.spines["left"].set_visible(False)
+
+    # Colorbar with the same height as the plot. Code copied from
+    # https://stackoverflow.com/a/18195921
+    # create an axes on the right side of ax. The width of cax will be 5%
+    # of ax and the padding between cax and ax will be fixed at 0.05 inch.
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0.05)
+    cbar = plt.colorbar(im, cax=cax)
+
+    return cbar    
+    
+    
+def plot_temperature(temperature, geo_dat, timestep, show_plot=False):
+    vmin = np.amin(temperature)
+    vmax = np.amax(temperature)
+    levels = np.linspace(vmin, vmax, 200)
+    norm = colors.TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
+
+    # Reuse plotting function from milestone 1.
+    ntimesteps = temperature.shape[2]
+    day = (np.int_(timestep / ntimesteps * 365) + 80) % 365
+    cbar = plot_robinson_projection_with_lines(temperature[:, :, timestep], geo_dat,
+                                               f"Temperature for Day {day}",
+                                               levels=levels, cmap="seismic",
+                                               vmin=vmin, vmax=vmax, norm=norm)
+    cbar.set_label("surface temperature [°C]")
+
+    # Adjust size of plot to viewport to prevent clipping of the legend.
+    plt.tight_layout()
+
+    filename = f"temperature_{timestep}.png"
+    plt.savefig(filename, dpi=300)
+    if show_plot:
+        plt.show()
+    plt.close()
+
+    return filename
